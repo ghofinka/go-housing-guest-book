@@ -1,0 +1,8 @@
+.env
+/bin/
+*.exe
+*.test
+*.out
+.vscode
+PRD.md
+/changelog
