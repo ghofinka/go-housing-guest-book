@@ -8,6 +8,12 @@ SELECT id, name, email, password_hash, role, house_id, contact, active, created_
 FROM users
 WHERE id = $1;
 
+-- name: GetPrincipal :one
+-- Current role, house and status for authenticating a request (never the token's claims).
+SELECT id, role, house_id, active
+FROM users
+WHERE id = $1;
+
 -- name: CreateUser :one
 INSERT INTO users (name, email, password_hash, role, house_id, contact)
 VALUES ($1, $2, $3, $4, $5, $6)
