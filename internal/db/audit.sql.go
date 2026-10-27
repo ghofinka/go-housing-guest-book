@@ -7,6 +7,7 @@ package db
 
 import (
 	"context"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -25,4 +26,73 @@ type InsertAuditLogParams struct {
 func (q *Queries) InsertAuditLog(ctx context.Context, arg InsertAuditLogParams) error {
 	_, err := q.db.Exec(ctx, insertAuditLog, arg.UserID, arg.Action, arg.Target)
 	return err
+}
+
+const listAuditLogs = `-- name: ListAuditLogs :many
+SELECT a.id, a.user_id, u.name AS user_name, a.action, a.target, a.created_at
+FROM audit_logs a
+LEFT JOIN users u ON u.id = a.user_id
+WHERE ($1::uuid IS NULL OR a.user_id = $1)
+  AND ($2::text IS NULL OR a.action = $2)
+  AND ($3::text IS NULL OR starts_with(a.target, $3))
+  AND ($4::timestamptz IS NULL OR a.created_at >= $4)
+  AND ($5::timestamptz IS NULL OR a.created_at < $5)
+  AND ($6::bigint IS NULL OR a.id < $6)
+ORDER BY a.id DESC
+LIMIT $7
+`
+
+type ListAuditLogsParams struct {
+	UserID       pgtype.UUID        `json:"user_id"`
+	Action       pgtype.Text        `json:"action"`
+	TargetPrefix pgtype.Text        `json:"target_prefix"`
+	FromAt       pgtype.Timestamptz `json:"from_at"`
+	BeforeAt     pgtype.Timestamptz `json:"before_at"`
+	BeforeID     pgtype.Int8        `json:"before_id"`
+	PageSize     int32              `json:"page_size"`
+}
+
+type ListAuditLogsRow struct {
+	ID        int64       `json:"id"`
+	UserID    pgtype.UUID `json:"user_id"`
+	UserName  pgtype.Text `json:"user_name"`
+	Action    string      `json:"action"`
+	Target    string      `json:"target"`
+	CreatedAt time.Time   `json:"created_at"`
+}
+
+// Newest first. Pages on the identity id (monotonic), which the primary key already indexes.
+func (q *Queries) ListAuditLogs(ctx context.Context, arg ListAuditLogsParams) ([]ListAuditLogsRow, error) {
+	rows, err := q.db.Query(ctx, listAuditLogs,
+		arg.UserID,
+		arg.Action,
+		arg.TargetPrefix,
+		arg.FromAt,
+		arg.BeforeAt,
+		arg.BeforeID,
+		arg.PageSize,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListAuditLogsRow
+	for rows.Next() {
+		var i ListAuditLogsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.UserID,
+			&i.UserName,
+			&i.Action,
+			&i.Target,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }

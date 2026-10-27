@@ -20,17 +20,27 @@ import (
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
 
+	"github.com/ghofinka/go-housing-guest-book/internal/audit"
 	"github.com/ghofinka/go-housing-guest-book/internal/auth"
 	"github.com/ghofinka/go-housing-guest-book/internal/house"
+	"github.com/ghofinka/go-housing-guest-book/internal/photo"
+	"github.com/ghofinka/go-housing-guest-book/internal/privacy"
+	"github.com/ghofinka/go-housing-guest-book/internal/retention"
 	"github.com/ghofinka/go-housing-guest-book/internal/server"
 	"github.com/ghofinka/go-housing-guest-book/internal/user"
+	"github.com/ghofinka/go-housing-guest-book/internal/visit"
 )
 
 const testPassword = "Test Password 1"
 
 var (
 	handler http.Handler
-	owner   *pgxpool.Pool // table owner: seeding and assertions only
+	owner   *pgxpool.Pool // table owner (bypasses RLS): seeding and assertions only
+	app     *pgxpool.Pool // the guestbook_app role the API itself uses
+	// photoDir is the temp directory behind the photo store, so tests can inspect it.
+	photoDir string
+	// photoStore is the store the API uses, for tests that build their own retention service around it.
+	photoStore photo.Store
 )
 
 func TestMain(m *testing.M) {
@@ -83,21 +93,38 @@ func run(m *testing.M) (int, error) {
 	cfg.User, cfg.Password = "guestbook_app", "guestbook_app"
 	pc, _ := pgxpool.ParseConfig("")
 	pc.ConnConfig = cfg
-	app, err := pgxpool.NewWithConfig(ctx, pc)
+	app, err = pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
 		return 0, err
 	}
 	defer app.Close()
+
+	photoDir, err = os.MkdirTemp("", "guestbook-photos-*")
+	if err != nil {
+		return 0, err
+	}
+	defer os.RemoveAll(photoDir)
+	photos, err := photo.NewLocalStore(photoDir)
+	if err != nil {
+		return 0, err
+	}
+	defer photos.Close() // runs before RemoveAll (defers are LIFO)
+	photoStore = photos
 
 	tokens := auth.NewTokenIssuer([]byte("0123456789abcdef0123456789abcdef"), 15*time.Minute)
 	svc, err := auth.NewService(app, tokens, time.Hour)
 	if err != nil {
 		return 0, err
 	}
+	authn := auth.NewAuthenticator(tokens, svc)
 	handler = server.New(server.Deps{DB: app, Routes: []server.Registrar{
-		auth.NewHandler(svc, tokens),
-		house.NewHandler(house.NewService(app), tokens),
-		user.NewHandler(user.NewService(app), tokens),
+		auth.NewHandler(svc, authn),
+		house.NewHandler(house.NewService(app), authn),
+		user.NewHandler(user.NewService(app), authn),
+		visit.NewHandler(visit.NewService(app, photos), authn),
+		audit.NewHandler(audit.NewService(app), authn),
+		retention.NewHandler(retention.NewService(app, photos), authn),
+		privacy.NewHandler(privacy.NewService(app), authn),
 	}})
 	return m.Run(), nil
 }
@@ -119,6 +146,9 @@ func seed(t *testing.T, name, email, role string, houseID any) {
 type tokenPair struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
+	User         struct {
+		ID string `json:"id"`
+	} `json:"user"`
 }
 
 // login returns a token pair for a seeded or created account.

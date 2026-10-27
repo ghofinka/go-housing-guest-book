@@ -82,7 +82,7 @@ func newEnv(t *testing.T) (http.Handler, *pgxpool.Pool, *pgxpool.Pool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	h := server.New(server.Deps{DB: app, Routes: []server.Registrar{auth.NewHandler(svc, tokens)}})
+	h := server.New(server.Deps{DB: app, Routes: []server.Registrar{auth.NewHandler(svc, auth.NewAuthenticator(tokens, svc))}})
 
 	seedUser(t, owner, "Admin Test", adminEmail, adminPassword, "admin", true)
 	return h, owner, app

@@ -193,6 +193,69 @@ func (s *Service) Me(ctx context.Context, p Principal) (UserInfo, error) {
 	return userInfo(user), nil
 }
 
+// LoadPrincipal returns the account's current role and house for request
+// authentication. Unknown and deactivated accounts both give ErrInvalidCredentials.
+func (s *Service) LoadPrincipal(ctx context.Context, id uuid.UUID) (Principal, error) {
+	row, err := db.New(s.pool).GetPrincipal(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Principal{}, ErrInvalidCredentials
+	}
+	if err != nil {
+		return Principal{}, fmt.Errorf("get principal: %w", err)
+	}
+	if !row.Active {
+		return Principal{}, ErrInvalidCredentials
+	}
+	p := Principal{UserID: row.ID, Role: row.Role}
+	if row.HouseID.Valid {
+		hid := uuid.UUID(row.HouseID.Bytes)
+		p.HouseID = &hid
+	}
+	return p, nil
+}
+
+// ErrWrongPassword is returned by ChangePassword when the current password does not match.
+var ErrWrongPassword = errors.New("current password is wrong")
+
+// ChangePassword sets a new password after checking the current one, then ends
+// every session of the account (all refresh tokens). Access tokens that were
+// already issued stay usable until they expire (15 minutes by default).
+func (s *Service) ChangePassword(ctx context.Context, userID uuid.UUID, current, next string) error {
+	hash, err := HashPassword(next)
+	if err != nil {
+		return err
+	}
+	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		tq := db.New(tx)
+		user, err := tq.GetUserByID(ctx, userID)
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !user.Active) {
+			return ErrInvalidCredentials
+		}
+		if err != nil {
+			return fmt.Errorf("get user: %w", err)
+		}
+		ok, err := VerifyPassword(current, user.PasswordHash)
+		if err != nil {
+			return fmt.Errorf("verify password: %w", err)
+		}
+		if !ok {
+			return ErrWrongPassword
+		}
+		if _, err := tq.UpdateUser(ctx, db.UpdateUserParams{
+			ID: userID, PasswordHash: pgtype.Text{String: hash, Valid: true},
+		}); err != nil {
+			return fmt.Errorf("update password: %w", err)
+		}
+		if err := tq.RevokeUserRefreshTokens(ctx, userID); err != nil {
+			return fmt.Errorf("revoke sessions: %w", err)
+		}
+		return tq.InsertAuditLog(ctx, db.InsertAuditLogParams{
+			UserID: pgtype.UUID{Bytes: userID, Valid: true},
+			Action: "password_changed", Target: "user:" + userID.String(),
+		})
+	})
+}
+
 // issue creates an access token and a stored refresh token in the given family.
 func (s *Service) issue(ctx context.Context, q *db.Queries, user db.User, family uuid.UUID) (TokenPair, error) {
 	info := userInfo(user)

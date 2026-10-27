@@ -1,6 +1,8 @@
 package auth
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -98,23 +100,40 @@ func TestTokenParse(t *testing.T) {
 	}
 }
 
-func TestRequireRole(t *testing.T) {
+type fakeLoader struct {
+	p   Principal
+	err error
+}
+
+func (f fakeLoader) LoadPrincipal(context.Context, uuid.UUID) (Principal, error) { return f.p, f.err }
+
+func TestAuthenticatorRequireRole(t *testing.T) {
 	issuer := NewTokenIssuer(testSecret, time.Minute)
-	guardTok, _ := issuer.Issue(Principal{UserID: uuid.New(), Role: RoleGuard})
+	id := uuid.New()
+	guardTok, _ := issuer.Issue(Principal{UserID: id, Role: RoleGuard})
+	adminTok, _ := issuer.Issue(Principal{UserID: id, Role: RoleAdmin})
 	ok := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-	h := Authenticate(issuer, RequireRole(ok, RoleAdmin))
 
 	tests := []struct {
-		name, header string
-		want         int
+		name   string
+		loader fakeLoader
+		header string
+		want   int
 	}{
-		{"no header", "", http.StatusUnauthorized},
-		{"wrong scheme", "Basic " + guardTok, http.StatusUnauthorized},
-		{"bad token", "Bearer nope", http.StatusUnauthorized},
-		{"guard on admin route", "Bearer " + guardTok, http.StatusForbidden},
+		{"no header", fakeLoader{p: Principal{UserID: id, Role: RoleAdmin}}, "", http.StatusUnauthorized},
+		{"wrong scheme", fakeLoader{p: Principal{UserID: id, Role: RoleAdmin}}, "Basic " + guardTok, http.StatusUnauthorized},
+		{"bad token", fakeLoader{p: Principal{UserID: id, Role: RoleAdmin}}, "Bearer nope", http.StatusUnauthorized},
+		{"guard on admin route", fakeLoader{p: Principal{UserID: id, Role: RoleGuard}}, "Bearer " + guardTok, http.StatusForbidden},
+		{"admin on admin route", fakeLoader{p: Principal{UserID: id, Role: RoleAdmin}}, "Bearer " + adminTok, http.StatusOK},
+		// The token's role claim is ignored: the database says what the account is now.
+		{"token says admin, account is now guard", fakeLoader{p: Principal{UserID: id, Role: RoleGuard}}, "Bearer " + adminTok, http.StatusForbidden},
+		{"token says guard, account is now admin", fakeLoader{p: Principal{UserID: id, Role: RoleAdmin}}, "Bearer " + guardTok, http.StatusOK},
+		{"valid token, account deactivated", fakeLoader{err: ErrInvalidCredentials}, "Bearer " + adminTok, http.StatusUnauthorized},
+		{"valid token, lookup fails", fakeLoader{err: errors.New("db down")}, "Bearer " + adminTok, http.StatusInternalServerError},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			h := NewAuthenticator(issuer, tt.loader).Require(ok, RoleAdmin)
 			req := httptest.NewRequest("GET", "/", nil)
 			if tt.header != "" {
 				req.Header.Set("Authorization", tt.header)
@@ -127,7 +146,6 @@ func TestRequireRole(t *testing.T) {
 		})
 	}
 }
-
 func TestLoginLimiterBlocksAfterBurst(t *testing.T) {
 	l := newLoginLimiter(3, time.Hour)
 	for i := 0; i < 3; i++ {

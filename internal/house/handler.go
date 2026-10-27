@@ -13,21 +13,17 @@ import (
 
 // Handler exposes the /v1/houses endpoints. Guards and admins may read; only admins write.
 type Handler struct {
-	svc    *Service
-	tokens *auth.TokenIssuer
+	svc   *Service
+	authn *auth.Authenticator
 }
 
-func NewHandler(svc *Service, tokens *auth.TokenIssuer) *Handler {
-	return &Handler{svc: svc, tokens: tokens}
+func NewHandler(svc *Service, authn *auth.Authenticator) *Handler {
+	return &Handler{svc: svc, authn: authn}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	read := func(f http.HandlerFunc) http.Handler {
-		return auth.Authenticate(h.tokens, auth.RequireRole(f, "guard", "admin"))
-	}
-	write := func(f http.HandlerFunc) http.Handler {
-		return auth.Authenticate(h.tokens, auth.RequireRole(f, "admin"))
-	}
+	read := func(f http.HandlerFunc) http.Handler { return h.authn.Require(f, "guard", "admin") }
+	write := func(f http.HandlerFunc) http.Handler { return h.authn.Require(f, "admin") }
 	mux.Handle("GET /v1/houses", read(h.list))
 	mux.Handle("GET /v1/houses/{id}", read(h.get))
 	mux.Handle("POST /v1/houses", write(h.create))

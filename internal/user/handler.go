@@ -25,18 +25,16 @@ const (
 
 // Handler exposes the admin-only /v1/users endpoints.
 type Handler struct {
-	svc    *Service
-	tokens *auth.TokenIssuer
+	svc   *Service
+	authn *auth.Authenticator
 }
 
-func NewHandler(svc *Service, tokens *auth.TokenIssuer) *Handler {
-	return &Handler{svc: svc, tokens: tokens}
+func NewHandler(svc *Service, authn *auth.Authenticator) *Handler {
+	return &Handler{svc: svc, authn: authn}
 }
 
 func (h *Handler) Register(mux *http.ServeMux) {
-	admin := func(f http.HandlerFunc) http.Handler {
-		return auth.Authenticate(h.tokens, auth.RequireRole(f, "admin"))
-	}
+	admin := func(f http.HandlerFunc) http.Handler { return h.authn.Require(f, "admin") }
 	mux.Handle("GET /v1/users", admin(h.list))
 	mux.Handle("GET /v1/users/{id}", admin(h.get))
 	mux.Handle("POST /v1/users", admin(h.create))

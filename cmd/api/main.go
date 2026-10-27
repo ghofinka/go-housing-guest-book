@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -12,11 +13,16 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/ghofinka/go-housing-guest-book/internal/audit"
 	"github.com/ghofinka/go-housing-guest-book/internal/auth"
 	"github.com/ghofinka/go-housing-guest-book/internal/config"
 	"github.com/ghofinka/go-housing-guest-book/internal/house"
+	"github.com/ghofinka/go-housing-guest-book/internal/photo"
+	"github.com/ghofinka/go-housing-guest-book/internal/privacy"
+	"github.com/ghofinka/go-housing-guest-book/internal/retention"
 	"github.com/ghofinka/go-housing-guest-book/internal/server"
 	"github.com/ghofinka/go-housing-guest-book/internal/user"
+	"github.com/ghofinka/go-housing-guest-book/internal/visit"
 )
 
 func main() {
@@ -41,10 +47,28 @@ func run() error {
 	}
 	defer pool.Close()
 
+	photos, err := photo.NewLocalStore(cfg.PhotoDir)
+	if err != nil {
+		return err
+	}
+	defer photos.Close()
+
 	tokens := auth.NewTokenIssuer(cfg.JWTSecret, cfg.AccessTokenTTL)
 	authSvc, err := auth.NewService(pool, tokens, cfg.RefreshTokenTTL)
 	if err != nil {
 		return err
+	}
+	authn := auth.NewAuthenticator(tokens, authSvc)
+
+	retentionSvc := retention.NewService(pool, photos)
+	if cfg.RetentionEnabled {
+		hour, minute, err := retention.ParseRunAt(cfg.RetentionRunAt)
+		if err != nil {
+			return fmt.Errorf("RETENTION_RUN_AT: %w", err)
+		}
+		go retention.NewScheduler(retentionSvc, hour, minute).Run(ctx)
+	} else {
+		slog.Warn("retention job disabled (RETENTION_ENABLED=false): photos and personal data will not expire unless cmd/retention is scheduled")
 	}
 
 	srv := &http.Server{
@@ -53,9 +77,13 @@ func run() error {
 			DB:         pool,
 			CORSOrigin: cfg.CORSOrigin,
 			Routes: []server.Registrar{
-				auth.NewHandler(authSvc, tokens),
-				house.NewHandler(house.NewService(pool), tokens),
-				user.NewHandler(user.NewService(pool), tokens),
+				auth.NewHandler(authSvc, authn),
+				house.NewHandler(house.NewService(pool), authn),
+				user.NewHandler(user.NewService(pool), authn),
+				visit.NewHandler(visit.NewService(pool, photos), authn),
+				audit.NewHandler(audit.NewService(pool), authn),
+				retention.NewHandler(retentionSvc, authn),
+				privacy.NewHandler(privacy.NewService(pool), authn),
 			},
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

@@ -3,10 +3,8 @@ package user
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,6 +14,7 @@ import (
 
 	"github.com/ghofinka/go-housing-guest-book/internal/auth"
 	"github.com/ghofinka/go-housing-guest-book/internal/db"
+	"github.com/ghofinka/go-housing-guest-book/internal/httpx"
 )
 
 var (
@@ -23,7 +22,7 @@ var (
 	ErrEmailTaken       = errors.New("email already used")
 	ErrHouseInvalid     = errors.New("house missing or inactive")
 	ErrSelfDeactivation = errors.New("cannot deactivate own account")
-	ErrBadCursor        = errors.New("invalid cursor")
+	ErrBadCursor        = httpx.ErrBadCursor
 )
 
 var validRoles = map[string]bool{"guard": true, "owner": true, "admin": true}
@@ -123,7 +122,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) (ListResult, error) {
 	}
 	params.HouseID = uuidOrNull(f.HouseID)
 	if f.Cursor != "" {
-		at, id, err := decodeCursor(f.Cursor)
+		at, id, err := httpx.DecodeCursor(f.Cursor)
 		if err != nil {
 			return ListResult{}, ErrBadCursor
 		}
@@ -138,7 +137,7 @@ func (s *Service) List(ctx context.Context, f ListFilter) (ListResult, error) {
 	if len(rows) > f.Limit {
 		rows = rows[:f.Limit]
 		last := rows[len(rows)-1]
-		c := encodeCursor(last.CreatedAt, last.ID)
+		c := httpx.EncodeCursor(last.CreatedAt, last.ID)
 		res.NextCursor = &c
 	}
 	for _, r := range rows {
@@ -263,25 +262,4 @@ func textOrNull(s *string) pgtype.Text {
 		return pgtype.Text{}
 	}
 	return pgtype.Text{String: *s, Valid: true}
-}
-
-func encodeCursor(at time.Time, id uuid.UUID) string {
-	return base64.RawURLEncoding.EncodeToString([]byte(at.UTC().Format(time.RFC3339Nano) + "|" + id.String()))
-}
-
-func decodeCursor(c string) (time.Time, uuid.UUID, error) {
-	raw, err := base64.RawURLEncoding.DecodeString(c)
-	if err != nil {
-		return time.Time{}, uuid.Nil, err
-	}
-	ts, idStr, ok := strings.Cut(string(raw), "|")
-	if !ok {
-		return time.Time{}, uuid.Nil, ErrBadCursor
-	}
-	at, err := time.Parse(time.RFC3339Nano, ts)
-	if err != nil {
-		return time.Time{}, uuid.Nil, err
-	}
-	id, err := uuid.Parse(idStr)
-	return at, id, err
 }

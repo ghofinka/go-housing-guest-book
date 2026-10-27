@@ -18,6 +18,12 @@ type Config struct {
 	AccessTokenTTL  time.Duration
 	RefreshTokenTTL time.Duration
 	CORSOrigin      string
+	// PhotoDir is where visit photos are stored (local disk, private, never served statically).
+	PhotoDir string
+	// RetentionEnabled turns the daily in-process retention job on or off (default on).
+	// RetentionRunAt is its daily start time in WIB, "HH:MM" (default 02:00).
+	RetentionEnabled bool
+	RetentionRunAt   string
 }
 
 func Load() (Config, error) {
@@ -26,6 +32,14 @@ func Load() (Config, error) {
 		HTTPAddr:    os.Getenv("HTTP_ADDR"),
 		JWTSecret:   []byte(os.Getenv("JWT_SECRET")),
 		CORSOrigin:  os.Getenv("CORS_ORIGIN"),
+		PhotoDir:    os.Getenv("PHOTO_DIR"),
+	}
+	if cfg.PhotoDir == "" {
+		cfg.PhotoDir = "data/photos"
+	}
+	cfg.RetentionEnabled = os.Getenv("RETENTION_ENABLED") != "false"
+	if cfg.RetentionRunAt = os.Getenv("RETENTION_RUN_AT"); cfg.RetentionRunAt == "" {
+		cfg.RetentionRunAt = "02:00"
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, errors.New("DATABASE_URL is required")

@@ -50,6 +50,17 @@ type RefreshToken struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type RetentionRun struct {
+	ID                int64              `json:"id"`
+	StartedAt         time.Time          `json:"started_at"`
+	FinishedAt        pgtype.Timestamptz `json:"finished_at"`
+	Trigger           string             `json:"trigger"`
+	DryRun            bool               `json:"dry_run"`
+	PhotosDeleted     int32              `json:"photos_deleted"`
+	RecordsAnonymized int32              `json:"records_anonymized"`
+	Error             pgtype.Text        `json:"error"`
+}
+
 type Setting struct {
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`

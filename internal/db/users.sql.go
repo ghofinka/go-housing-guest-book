@@ -53,6 +53,32 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 	return i, err
 }
 
+const getPrincipal = `-- name: GetPrincipal :one
+SELECT id, role, house_id, active
+FROM users
+WHERE id = $1
+`
+
+type GetPrincipalRow struct {
+	ID      uuid.UUID   `json:"id"`
+	Role    string      `json:"role"`
+	HouseID pgtype.UUID `json:"house_id"`
+	Active  bool        `json:"active"`
+}
+
+// Current role, house and status for authenticating a request (never the token's claims).
+func (q *Queries) GetPrincipal(ctx context.Context, id uuid.UUID) (GetPrincipalRow, error) {
+	row := q.db.QueryRow(ctx, getPrincipal, id)
+	var i GetPrincipalRow
+	err := row.Scan(
+		&i.ID,
+		&i.Role,
+		&i.HouseID,
+		&i.Active,
+	)
+	return i, err
+}
+
 const getUserByEmail = `-- name: GetUserByEmail :one
 SELECT id, name, email, password_hash, role, house_id, contact, active, created_at, updated_at
 FROM users

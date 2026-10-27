@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repo. Product requirements live in
 
 **Housing Guest Book** (Buku Tamu Digital Perumahan): a backend API for a residential cluster's guest log. Guards (satpam) check guests in and out instead of holding their ID cards. Homeowners see only their own house's visits. Admins manage accounts, retention and audit.
 
-Status: greenfield. Only the PRD exists; no code yet. Stack and layout below are the agreed starting point. If you change them, update this file in the same change.
+Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested; Should/Could items are not started. Stack and layout below describe the code as built. If you change them, update this file in the same change. Operations guide for retention, erasure and the privacy notice: [docs/RETENTION.md](docs/RETENTION.md).
 
 ## Stack
 
@@ -60,9 +60,9 @@ These are the requirements most likely to be broken by a plausible-looking short
 1. **Server-side timestamps only (M2, M3).** `checkin_at` and `checkout_at` are set by the server (`now()` in the DB or Go), never accepted from the client, never editable by guards. Store as `timestamptz`; present in WIB (`Asia/Jakarta`). Exception: offline sync (S5) may accept a client-captured time, but only as a separate `client_captured_at` field alongside the server's received time.
 2. **Per-house access isolation (M5, M6).** A homeowner can only read visits where `house_id` equals their own. Enforce it in two layers: the query/service layer (always filter by the caller's house) and Postgres Row-Level Security as defense in depth. Direct links by ID must return **404**, not 403, for other houses' records so existence is not leaked. Every new endpoint that returns visit or photo data needs a cross-house test.
 3. **Roles (M5).** `guard`, `owner`, `admin`. Guards see all visits. Owners see their house only. Admins manage users, houses, retention. One account per person; no shared accounts. Authorization is checked in middleware and again in the service.
-4. **Photos are never public (M4, NFR).** Store in private storage; serve only through an authenticated endpoint or short-lived signed URL, after the same house/role check as the visit. Vehicle photo is required when the guest arrives by vehicle; face photo is optional and governed by a cluster policy setting. Compress on upload and validate content type and size.
+4. **Photos are never public (M4, NFR).** Decision (2026-10-21): v1 stores photos on local disk (a configured directory outside any static-file route; `visits.*_photo_path` holds a relative path). Put storage behind a small interface in `internal/photo` so S3-style storage can replace it later without touching handlers. Store in private storage; serve only through an authenticated endpoint or short-lived signed URL, after the same house/role check as the visit. Vehicle photo is required when the guest arrives by vehicle; face photo is optional and governed by a cluster policy setting. Compress on upload and validate content type and size.
 5. **House numbers come from master data (M1, M10).** `house_id` is a foreign key to an active house; reject unknown or inactive houses. Categories are a fixed enum: `tamu`, `kurir`, `ojol`, `tukang`, `keluarga`, `lainnya`.
-6. **Retention (M9).** A scheduled job deletes photos and anonymizes personal fields (guest name, plate) after N days. N is admin-configurable (default photos 30-90 days). The job must be idempotent, logged, and documented. Support deletion on data-subject request, also audited.
+6. **Retention (M9).** Implemented in `internal/retention`. Decided defaults: photos 30 days, personal text fields (guest name, plate, purpose note) anonymized after 90 days, both admin-editable (`settings`), photo limit never longer than the personal-data limit. Age is counted from `checkin_at` regardless of status. The job runs daily at 02:00 WIB inside the API plus `cmd/retention`, takes a Postgres advisory lock, deletes the file **before** clearing its path, is idempotent, supports a dry run, and records each run in `retention_runs` and the audit log (counts only, never personal data). Erasure on request is `DELETE /v1/visits/{id}/personal-data` (admin only, audited). Do not weaken any of this without asking.
 7. **Audit log (M11).** Record who viewed, changed or deleted visit/photo/user data (`user_id`, `action`, `target`, `timestamp`). The table is append-only: the application DB role has `INSERT` and `SELECT` only, no `UPDATE`/`DELETE`. Guards and owners cannot read it; admins can.
 8. **Check-out (M3).** Idempotent: checking out an already-exited visit returns the existing record, not an error or a second timestamp. "Guests inside" is `status = 'inside'`, indexed, and must load in < 2 s.
 9. **Minimal data (privacy).** Do not add personal-data fields beyond the PRD data model without a PRD change. Never log guest names, plates, photo URLs or tokens at info level.
@@ -70,7 +70,7 @@ These are the requirements most likely to be broken by a plausible-looking short
 
 ## Data model
 
-Follow PRD section 7: `visits`, `houses`, `users`, `pre_registrations`, `audit_logs`. Conventions:
+Follow PRD section 7: `visits`, `houses`, `users`, `pre_registrations`, `audit_logs`; plus `refresh_tokens`, `settings` (retention limits, face-photo policy, privacy contact) and `retention_runs`. Conventions:
 
 - UUID primary keys (`uuid`, generated with `gen_random_uuid()`), except where a human-facing code is needed (pre-registration `code`).
 - `created_at`/`updated_at` as `timestamptz`; soft-deactivate houses and users (`active`/`status`) instead of deleting.
