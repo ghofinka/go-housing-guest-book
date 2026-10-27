@@ -5,7 +5,7 @@ Guards (satpam) check guests in and out and record a vehicle photo instead of ho
 cards. Homeowners see only their own house's visits. Admins manage accounts, houses, retention
 and audit.
 
-Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested. Should/Could items are
+Status: the MVP backend is implemented and tested. Should/Could items are
 not started.
 
 ## Tech stack
