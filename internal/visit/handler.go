@@ -25,6 +25,8 @@ const (
 	maxPlateLen  = 12
 	defaultLimit = 50
 	maxLimit     = 200
+	// minSearchLen keeps a name/plate search from matching nearly every row.
+	minSearchLen = 2
 )
 
 var validCategories = map[string]bool{
@@ -250,6 +252,27 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	}
 	if f.From != nil && f.Before != nil && !f.From.Before(*f.Before) {
 		fields["to"] = "Tanggal akhir tidak boleh sebelum tanggal awal."
+	}
+	// Search (PRD S6). Values are matched as plain text, never as patterns, and are never logged.
+	if v := q.Get("category"); v != "" {
+		if !validCategories[v] {
+			fields["category"] = "Kategori harus tamu, kurir, ojol, tukang, keluarga, atau lainnya."
+		}
+		f.Category = v
+	}
+	if v := strings.TrimSpace(q.Get("name")); v != "" {
+		if n := utf8.RuneCountInString(v); n < minSearchLen || n > maxNameLen {
+			fields["name"] = "Nama pencarian " + strconv.Itoa(minSearchLen) + " sampai " + strconv.Itoa(maxNameLen) + " karakter."
+		}
+		f.Name = v
+	}
+	if v := q.Get("plate"); strings.TrimSpace(v) != "" {
+		plate, ok := normalizePlate(v)
+		plate = strings.ReplaceAll(plate, " ", "")
+		if !ok || utf8.RuneCountInString(plate) < minSearchLen {
+			fields["plate"] = "Plat pencarian minimal " + strconv.Itoa(minSearchLen) + " huruf atau angka, tanpa simbol."
+		}
+		f.Plate = plate
 	}
 	if len(fields) > 0 {
 		httpx.ValidationError(w, fields)

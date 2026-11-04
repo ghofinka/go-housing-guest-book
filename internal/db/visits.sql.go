@@ -208,8 +208,11 @@ WHERE v.status = 'inside'
        OR (v.checkin_at, v.id) < ($2::timestamptz, $3::uuid))
   AND ($4::timestamptz IS NULL OR v.checkin_at >= $4)
   AND ($5::timestamptz IS NULL OR v.checkin_at < $5)
+  AND ($6::text IS NULL OR v.category = $6)
+  AND ($7::text IS NULL OR v.guest_name ILIKE $7)
+  AND ($8::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE $8)
 ORDER BY v.checkin_at DESC, v.id DESC
-LIMIT $6
+LIMIT $9
 `
 
 type ListInsideVisitsParams struct {
@@ -218,6 +221,9 @@ type ListInsideVisitsParams struct {
 	AfterID        pgtype.UUID        `json:"after_id"`
 	FromAt         pgtype.Timestamptz `json:"from_at"`
 	BeforeAt       pgtype.Timestamptz `json:"before_at"`
+	Category       pgtype.Text        `json:"category"`
+	NameLike       pgtype.Text        `json:"name_like"`
+	PlateLike      pgtype.Text        `json:"plate_like"`
 	PageSize       int32              `json:"page_size"`
 }
 
@@ -248,6 +254,9 @@ func (q *Queries) ListInsideVisits(ctx context.Context, arg ListInsideVisitsPara
 		arg.AfterID,
 		arg.FromAt,
 		arg.BeforeAt,
+		arg.Category,
+		arg.NameLike,
+		arg.PlateLike,
 		arg.PageSize,
 	)
 	if err != nil {
@@ -298,8 +307,11 @@ WHERE ($1::text IS NULL OR v.status = $1)
        OR (v.checkin_at, v.id) < ($3::timestamptz, $4::uuid))
   AND ($5::timestamptz IS NULL OR v.checkin_at >= $5)
   AND ($6::timestamptz IS NULL OR v.checkin_at < $6)
+  AND ($7::text IS NULL OR v.category = $7)
+  AND ($8::text IS NULL OR v.guest_name ILIKE $8)
+  AND ($9::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE $9)
 ORDER BY v.checkin_at DESC, v.id DESC
-LIMIT $7
+LIMIT $10
 `
 
 type ListVisitsParams struct {
@@ -309,6 +321,9 @@ type ListVisitsParams struct {
 	AfterID        pgtype.UUID        `json:"after_id"`
 	FromAt         pgtype.Timestamptz `json:"from_at"`
 	BeforeAt       pgtype.Timestamptz `json:"before_at"`
+	Category       pgtype.Text        `json:"category"`
+	NameLike       pgtype.Text        `json:"name_like"`
+	PlateLike      pgtype.Text        `json:"plate_like"`
 	PageSize       int32              `json:"page_size"`
 }
 
@@ -339,6 +354,9 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 		arg.AfterID,
 		arg.FromAt,
 		arg.BeforeAt,
+		arg.Category,
+		arg.NameLike,
+		arg.PlateLike,
 		arg.PageSize,
 	)
 	if err != nil {

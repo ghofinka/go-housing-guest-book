@@ -43,6 +43,10 @@ not started.
   category keeps the vehicle-photo rule.
 - Check-in and check-out times are set by the server, never by the client. Check-out is idempotent.
 - List visits with filters (`status`, `house_id`, `from`, `to`) and cursor pagination, newest first.
+- Search (PRD S6): `GET /v1/visits` also takes `name` (contains, any case), `plate` (contains,
+  ignoring case and spaces) and `category`, at least 2 characters for name and plate. Text is matched
+  literally (`%` and `_` are not wildcards) and is never logged. Owners can search too, but only
+  within their own house. Anonymized records no longer match by name or plate.
 - House numbers come from master data; unknown or inactive houses are rejected.
 
 **Photos**

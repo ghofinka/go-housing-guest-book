@@ -45,6 +45,9 @@ WHERE v.status = 'inside'
        OR (v.checkin_at, v.id) < (sqlc.narg('after_checkin_at')::timestamptz, sqlc.narg('after_id')::uuid))
   AND (sqlc.narg('from_at')::timestamptz IS NULL OR v.checkin_at >= sqlc.narg('from_at'))
   AND (sqlc.narg('before_at')::timestamptz IS NULL OR v.checkin_at < sqlc.narg('before_at'))
+  AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+  AND (sqlc.narg('name_like')::text IS NULL OR v.guest_name ILIKE sqlc.narg('name_like'))
+  AND (sqlc.narg('plate_like')::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE sqlc.narg('plate_like'))
 ORDER BY v.checkin_at DESC, v.id DESC
 LIMIT sqlc.arg('page_size');
 
@@ -61,6 +64,9 @@ WHERE (sqlc.narg('status')::text IS NULL OR v.status = sqlc.narg('status'))
        OR (v.checkin_at, v.id) < (sqlc.narg('after_checkin_at')::timestamptz, sqlc.narg('after_id')::uuid))
   AND (sqlc.narg('from_at')::timestamptz IS NULL OR v.checkin_at >= sqlc.narg('from_at'))
   AND (sqlc.narg('before_at')::timestamptz IS NULL OR v.checkin_at < sqlc.narg('before_at'))
+  AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+  AND (sqlc.narg('name_like')::text IS NULL OR v.guest_name ILIKE sqlc.narg('name_like'))
+  AND (sqlc.narg('plate_like')::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE sqlc.narg('plate_like'))
 ORDER BY v.checkin_at DESC, v.id DESC
 LIMIT sqlc.arg('page_size');
 

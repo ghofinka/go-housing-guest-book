@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -93,6 +94,26 @@ type ListFilter struct {
 	From, Before *time.Time
 	Cursor       string
 	Limit        int
+	// Search filters (PRD S6). Empty means no filter. Name is a case-insensitive contains match,
+	// Plate a contains match on the plate without spaces (already upper-cased by the handler).
+	Category, Name, Plate string
+}
+
+// likeContains turns user text into a contains pattern for ILIKE, escaping the LIKE
+// metacharacters so the text is always matched literally.
+func likeContains(s string) pgtype.Text {
+	if s == "" {
+		return pgtype.Text{}
+	}
+	esc := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+	return pgtype.Text{String: "%" + esc + "%", Valid: true}
+}
+
+func textOrNullStr(s string) pgtype.Text {
+	if s == "" {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: s, Valid: true}
 }
 
 type ListResult struct {
@@ -378,7 +399,8 @@ func (s *Service) List(ctx context.Context, p auth.Principal, f ListFilter) (Lis
 		if f.Status == StatusInside {
 			rs, err := q.ListInsideVisits(ctx, db.ListInsideVisitsParams{
 				HouseID: uuidOrNull(f.HouseID), AfterCheckinAt: afterAt, AfterID: afterID,
-				FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before), PageSize: size})
+				FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before),
+				Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), PageSize: size})
 			for _, r := range rs {
 				rows = append(rows, row(r))
 			}
@@ -390,7 +412,8 @@ func (s *Service) List(ctx context.Context, p auth.Principal, f ListFilter) (Lis
 		}
 		rs, err := q.ListVisits(ctx, db.ListVisitsParams{
 			Status: status, HouseID: uuidOrNull(f.HouseID), AfterCheckinAt: afterAt, AfterID: afterID,
-			FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before), PageSize: size})
+			FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before),
+			Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), PageSize: size})
 		for _, r := range rs {
 			rows = append(rows, row(r))
 		}
