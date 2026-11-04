@@ -1,8 +1,8 @@
 -- name: CreateVisit :one
 -- Returns no row when client_request_id already exists (idempotent retry).
 INSERT INTO visits (client_request_id, house_id, guest_name, category, purpose_note, vehicle_plate, checkin_by,
-                    vehicle_photo_path, face_photo_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    vehicle_photo_path, face_photo_path, pre_registration_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (client_request_id) DO NOTHING
 RETURNING id;
 

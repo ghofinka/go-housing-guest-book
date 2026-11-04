@@ -82,6 +82,9 @@ type CheckInInput struct {
 	Category        string
 	PurposeNote     *string
 	VehiclePlate    *string
+	// PreRegistrationCode is a normalized pre-registration code (PRD S2), "" for none. When set,
+	// the house, name and plate default from the pre-registration.
+	PreRegistrationCode string
 	// Photos are already validated and compressed (photo.Process). nil means none.
 	VehiclePhoto []byte
 	FacePhoto    []byte
@@ -156,6 +159,23 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			return err
 		}
 
+		var preRegID pgtype.UUID
+		if in.PreRegistrationCode != "" {
+			var err error
+			preRegID, err = useCode(ctx, q, &in, time.Now())
+			if errors.Is(err, ErrPreRegUsed) {
+				// A concurrent retry of this same check-in may have just used the code:
+				// answer like a replay instead of reporting the code as used.
+				if v, ok, rerr := replay(ctx, q, in.ClientRequestID); rerr == nil && ok {
+					out = v
+					return nil
+				}
+			}
+			if err != nil {
+				return err
+			}
+		}
+
 		h, err := q.GetHouse(ctx, in.HouseID)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !h.Active) {
 			return ErrHouseInvalid
@@ -172,6 +192,11 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			if required == "true" {
 				return ErrFacePhotoRequired
 			}
+		}
+
+		// The plate may come from the pre-registration, so this is checked after resolving the code.
+		if in.VehiclePlate != nil && in.VehiclePhoto == nil && !FastLane(in.Category) {
+			return ErrVehiclePhotoRequired
 		}
 
 		var vehicleKey, faceKey *string
@@ -191,15 +216,16 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 		}
 
 		id, err := q.CreateVisit(ctx, db.CreateVisitParams{
-			ClientRequestID:  uuidOrNull(in.ClientRequestID),
-			HouseID:          in.HouseID,
-			GuestName:        textOrNull(in.GuestName),
-			Category:         in.Category,
-			PurposeNote:      textOrNull(in.PurposeNote),
-			VehiclePlate:     textOrNull(in.VehiclePlate),
-			CheckinBy:        p.UserID,
-			VehiclePhotoPath: textOrNull(vehicleKey),
-			FacePhotoPath:    textOrNull(faceKey),
+			ClientRequestID:   uuidOrNull(in.ClientRequestID),
+			HouseID:           in.HouseID,
+			GuestName:         textOrNull(in.GuestName),
+			Category:          in.Category,
+			PurposeNote:       textOrNull(in.PurposeNote),
+			VehiclePlate:      textOrNull(in.VehiclePlate),
+			CheckinBy:         p.UserID,
+			VehiclePhotoPath:  textOrNull(vehicleKey),
+			FacePhotoPath:     textOrNull(faceKey),
+			PreRegistrationID: preRegID,
 		})
 		if errors.Is(err, pgx.ErrNoRows) { // lost a race with the same client_request_id
 			v, ok, err := replay(ctx, q, in.ClientRequestID)
@@ -211,6 +237,17 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 		}
 		if err != nil {
 			return fmt.Errorf("create visit: %w", err)
+		}
+		if preRegID.Valid {
+			if _, err := q.MarkPreRegistrationUsed(ctx, preRegID.Bytes); err != nil {
+				return fmt.Errorf("mark pre-registration used: %w", err)
+			}
+			if err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+				UserID: pgtype.UUID{Bytes: p.UserID, Valid: true}, Action: "prereg_used",
+				Target: "prereg:" + uuid.UUID(preRegID.Bytes).String(),
+			}); err != nil {
+				return err
+			}
 		}
 		row, err := q.GetVisit(ctx, id)
 		if err != nil {
@@ -460,7 +497,10 @@ func audit(ctx context.Context, q *db.Queries, actor uuid.UUID, action string, v
 }
 
 func wrap(err error, op string) error {
-	for _, known := range []error{ErrNotFound, ErrPhotoNotFound, ErrHouseInvalid, ErrFacePhotoRequired} {
+	for _, known := range []error{
+		ErrNotFound, ErrPhotoNotFound, ErrHouseInvalid, ErrFacePhotoRequired, ErrVehiclePhotoRequired,
+		ErrPreRegNotFound, ErrPreRegUsed, ErrPreRegCancelled, ErrPreRegWrongDate, ErrPreRegHouseMismatch,
+	} {
 		if errors.Is(err, known) {
 			return err
 		}

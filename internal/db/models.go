@@ -29,14 +29,18 @@ type House struct {
 }
 
 type PreRegistration struct {
-	ID           uuid.UUID   `json:"id"`
-	HouseID      uuid.UUID   `json:"house_id"`
-	GuestName    string      `json:"guest_name"`
-	ExpectedDate pgtype.Date `json:"expected_date"`
-	Plate        pgtype.Text `json:"plate"`
-	Code         string      `json:"code"`
-	ExpiresAt    time.Time   `json:"expires_at"`
-	CreatedAt    time.Time   `json:"created_at"`
+	ID           uuid.UUID          `json:"id"`
+	HouseID      uuid.UUID          `json:"house_id"`
+	GuestName    pgtype.Text        `json:"guest_name"`
+	ExpectedDate pgtype.Date        `json:"expected_date"`
+	Plate        pgtype.Text        `json:"plate"`
+	Code         string             `json:"code"`
+	ExpiresAt    time.Time          `json:"expires_at"`
+	CreatedAt    time.Time          `json:"created_at"`
+	CreatedBy    uuid.UUID          `json:"created_by"`
+	Status       string             `json:"status"`
+	UsedAt       pgtype.Timestamptz `json:"used_at"`
+	AnonymizedAt pgtype.Timestamptz `json:"anonymized_at"`
 }
 
 type RefreshToken struct {
@@ -59,6 +63,7 @@ type RetentionRun struct {
 	PhotosDeleted     int32              `json:"photos_deleted"`
 	RecordsAnonymized int32              `json:"records_anonymized"`
 	Error             pgtype.Text        `json:"error"`
+	PreregsAnonymized int32              `json:"preregs_anonymized"`
 }
 
 type Setting struct {

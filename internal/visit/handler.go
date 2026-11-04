@@ -66,6 +66,8 @@ type checkInRequest struct {
 	Category        string     `json:"category"`
 	PurposeNote     *string    `json:"purpose_note"`
 	VehiclePlate    *string    `json:"vehicle_plate"`
+	// PreRegistrationCode (PRD S2): house, name and plate default from the pre-registration.
+	PreRegistrationCode *string `json:"pre_registration_code"`
 }
 
 // checkIn accepts JSON (no photos) or multipart/form-data. The multipart form has
@@ -93,8 +95,20 @@ func (h *Handler) checkIn(w http.ResponseWriter, r *http.Request) {
 		PurposeNote:     blankToNil(req.PurposeNote),
 		VehiclePlate:    blankToNil(req.VehiclePlate),
 	}
+	// With a pre-registration code the pre-registration supplies the house and name, and the
+	// category defaults to a plain guest.
+	if code := blankToNil(req.PreRegistrationCode); code != nil {
+		c, ok := NormalizeCode(*code)
+		if !ok {
+			fields["pre_registration_code"] = "Kode pre-registrasi harus 8 huruf dan angka."
+		}
+		in.PreRegistrationCode = c
+		if in.Category == "" {
+			in.Category = "tamu"
+		}
+	}
 	if req.HouseID == nil || *req.HouseID == uuid.Nil {
-		if _, bad := fields["house_id"]; !bad {
+		if _, bad := fields["house_id"]; !bad && in.PreRegistrationCode == "" {
 			fields["house_id"] = "Nomor rumah tujuan wajib dipilih."
 		}
 	} else {
@@ -104,7 +118,7 @@ func (h *Handler) checkIn(w http.ResponseWriter, r *http.Request) {
 		fields["category"] = "Kategori harus tamu, kurir, ojol, tukang, keluarga, atau lainnya."
 	}
 	switch {
-	case in.GuestName == nil && !FastLane(in.Category):
+	case in.GuestName == nil && !FastLane(in.Category) && in.PreRegistrationCode == "":
 		fields["guest_name"] = "Nama tamu wajib diisi."
 	case in.GuestName != nil && utf8.RuneCountInString(*in.GuestName) > maxNameLen:
 		fields["guest_name"] = "Nama maksimal " + strconv.Itoa(maxNameLen) + " karakter."
@@ -297,6 +311,18 @@ func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		httpx.ValidationError(w, map[string]string{"face_photo": "Foto wajah wajib sesuai kebijakan perumahan."})
 	case errors.Is(err, ErrHouseInvalid):
 		httpx.ValidationError(w, map[string]string{"house_id": "Rumah tidak ditemukan atau tidak aktif."})
+	case errors.Is(err, ErrVehiclePhotoRequired):
+		httpx.ValidationError(w, map[string]string{"vehicle_photo": "Foto kendaraan wajib jika tamu membawa kendaraan."})
+	case errors.Is(err, ErrPreRegHouseMismatch):
+		httpx.ValidationError(w, map[string]string{"house_id": "Kode ini terdaftar untuk rumah lain."})
+	case errors.Is(err, ErrPreRegNotFound):
+		httpx.ValidationError(w, map[string]string{"pre_registration_code": "Kode tidak ditemukan."})
+	case errors.Is(err, ErrPreRegUsed):
+		httpx.ValidationError(w, map[string]string{"pre_registration_code": "Kode ini sudah dipakai."})
+	case errors.Is(err, ErrPreRegCancelled):
+		httpx.ValidationError(w, map[string]string{"pre_registration_code": "Kode ini sudah dibatalkan oleh pemilik rumah."})
+	case errors.Is(err, ErrPreRegWrongDate):
+		httpx.ValidationError(w, map[string]string{"pre_registration_code": "Kode ini tidak berlaku hari ini."})
 	case errors.Is(err, ErrBadCursor):
 		httpx.ValidationError(w, map[string]string{"cursor": "Cursor tidak valid."})
 	default:
@@ -349,6 +375,7 @@ func readCheckInForm(w http.ResponseWriter, r *http.Request, req *checkInRequest
 	req.HouseID = parseUUID("house_id")
 	req.ClientRequestID = parseUUID("client_request_id")
 	req.GuestName, req.PurposeNote, req.VehiclePlate = val("guest_name"), val("purpose_note"), val("vehicle_plate")
+	req.PreRegistrationCode = val("pre_registration_code")
 	if c := val("category"); c != nil {
 		req.Category = *c
 	}

@@ -5,11 +5,11 @@ RETURNING id;
 
 -- name: FinishRetentionRun :exec
 UPDATE retention_runs
-SET finished_at = now(), photos_deleted = $2, records_anonymized = $3, error = $4
+SET finished_at = now(), photos_deleted = $2, records_anonymized = $3, preregs_anonymized = $4, error = $5
 WHERE id = $1;
 
 -- name: ListRetentionRuns :many
-SELECT id, started_at, finished_at, trigger, dry_run, photos_deleted, records_anonymized, error
+SELECT id, started_at, finished_at, trigger, dry_run, photos_deleted, records_anonymized, preregs_anonymized, error
 FROM retention_runs
 ORDER BY id DESC
 LIMIT $1;
@@ -51,6 +51,25 @@ RETURNING v.id;
 
 -- name: CountRecordsToAnonymize :one
 SELECT count(*)::int FROM visits WHERE checkin_at < $1 AND anonymized_at IS NULL;
+
+-- name: AnonymizePreRegistrationBatch :many
+-- Pre-registrations hold a guest name and plate too, so they expire with the same personal-data
+-- limit (counted from creation). The row stays; only the personal fields go.
+WITH batch AS (
+    SELECT old.id FROM pre_registrations old
+    WHERE old.created_at < sqlc.arg('cutoff') AND old.anonymized_at IS NULL
+    ORDER BY old.created_at, old.id
+    LIMIT sqlc.arg('batch_size')
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE pre_registrations p
+SET guest_name = NULL, plate = NULL, anonymized_at = now()
+FROM batch
+WHERE p.id = batch.id
+RETURNING p.id;
+
+-- name: CountPreRegistrationsToAnonymize :one
+SELECT count(*)::int FROM pre_registrations WHERE created_at < $1 AND anonymized_at IS NULL;
 
 -- name: GetVisitErasureState :one
 SELECT vehicle_photo_path, face_photo_path, anonymized_at

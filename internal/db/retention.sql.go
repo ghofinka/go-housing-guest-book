@@ -13,6 +13,48 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const anonymizePreRegistrationBatch = `-- name: AnonymizePreRegistrationBatch :many
+WITH batch AS (
+    SELECT old.id FROM pre_registrations old
+    WHERE old.created_at < $1 AND old.anonymized_at IS NULL
+    ORDER BY old.created_at, old.id
+    LIMIT $2
+    FOR UPDATE SKIP LOCKED
+)
+UPDATE pre_registrations p
+SET guest_name = NULL, plate = NULL, anonymized_at = now()
+FROM batch
+WHERE p.id = batch.id
+RETURNING p.id
+`
+
+type AnonymizePreRegistrationBatchParams struct {
+	Cutoff    time.Time `json:"cutoff"`
+	BatchSize int32     `json:"batch_size"`
+}
+
+// Pre-registrations hold a guest name and plate too, so they expire with the same personal-data
+// limit (counted from creation). The row stays; only the personal fields go.
+func (q *Queries) AnonymizePreRegistrationBatch(ctx context.Context, arg AnonymizePreRegistrationBatchParams) ([]uuid.UUID, error) {
+	rows, err := q.db.Query(ctx, anonymizePreRegistrationBatch, arg.Cutoff, arg.BatchSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []uuid.UUID
+	for rows.Next() {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const anonymizeVisitBatch = `-- name: AnonymizeVisitBatch :many
 WITH batch AS (
     SELECT old.id FROM visits old
@@ -76,6 +118,17 @@ func (q *Queries) CountPhotosToPurge(ctx context.Context, checkinAt time.Time) (
 	return column_1, err
 }
 
+const countPreRegistrationsToAnonymize = `-- name: CountPreRegistrationsToAnonymize :one
+SELECT count(*)::int FROM pre_registrations WHERE created_at < $1 AND anonymized_at IS NULL
+`
+
+func (q *Queries) CountPreRegistrationsToAnonymize(ctx context.Context, createdAt time.Time) (int32, error) {
+	row := q.db.QueryRow(ctx, countPreRegistrationsToAnonymize, createdAt)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const countRecordsToAnonymize = `-- name: CountRecordsToAnonymize :one
 SELECT count(*)::int FROM visits WHERE checkin_at < $1 AND anonymized_at IS NULL
 `
@@ -103,7 +156,7 @@ func (q *Queries) EraseVisit(ctx context.Context, id uuid.UUID) error {
 
 const finishRetentionRun = `-- name: FinishRetentionRun :exec
 UPDATE retention_runs
-SET finished_at = now(), photos_deleted = $2, records_anonymized = $3, error = $4
+SET finished_at = now(), photos_deleted = $2, records_anonymized = $3, preregs_anonymized = $4, error = $5
 WHERE id = $1
 `
 
@@ -111,6 +164,7 @@ type FinishRetentionRunParams struct {
 	ID                int64       `json:"id"`
 	PhotosDeleted     int32       `json:"photos_deleted"`
 	RecordsAnonymized int32       `json:"records_anonymized"`
+	PreregsAnonymized int32       `json:"preregs_anonymized"`
 	Error             pgtype.Text `json:"error"`
 }
 
@@ -119,6 +173,7 @@ func (q *Queries) FinishRetentionRun(ctx context.Context, arg FinishRetentionRun
 		arg.ID,
 		arg.PhotosDeleted,
 		arg.RecordsAnonymized,
+		arg.PreregsAnonymized,
 		arg.Error,
 	)
 	return err
@@ -208,21 +263,33 @@ func (q *Queries) ListPhotoPurgeBatch(ctx context.Context, arg ListPhotoPurgeBat
 }
 
 const listRetentionRuns = `-- name: ListRetentionRuns :many
-SELECT id, started_at, finished_at, trigger, dry_run, photos_deleted, records_anonymized, error
+SELECT id, started_at, finished_at, trigger, dry_run, photos_deleted, records_anonymized, preregs_anonymized, error
 FROM retention_runs
 ORDER BY id DESC
 LIMIT $1
 `
 
-func (q *Queries) ListRetentionRuns(ctx context.Context, limit int32) ([]RetentionRun, error) {
+type ListRetentionRunsRow struct {
+	ID                int64              `json:"id"`
+	StartedAt         time.Time          `json:"started_at"`
+	FinishedAt        pgtype.Timestamptz `json:"finished_at"`
+	Trigger           string             `json:"trigger"`
+	DryRun            bool               `json:"dry_run"`
+	PhotosDeleted     int32              `json:"photos_deleted"`
+	RecordsAnonymized int32              `json:"records_anonymized"`
+	PreregsAnonymized int32              `json:"preregs_anonymized"`
+	Error             pgtype.Text        `json:"error"`
+}
+
+func (q *Queries) ListRetentionRuns(ctx context.Context, limit int32) ([]ListRetentionRunsRow, error) {
 	rows, err := q.db.Query(ctx, listRetentionRuns, limit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var items []RetentionRun
+	var items []ListRetentionRunsRow
 	for rows.Next() {
-		var i RetentionRun
+		var i ListRetentionRunsRow
 		if err := rows.Scan(
 			&i.ID,
 			&i.StartedAt,
@@ -231,6 +298,7 @@ func (q *Queries) ListRetentionRuns(ctx context.Context, limit int32) ([]Retenti
 			&i.DryRun,
 			&i.PhotosDeleted,
 			&i.RecordsAnonymized,
+			&i.PreregsAnonymized,
 			&i.Error,
 		); err != nil {
 			return nil, err

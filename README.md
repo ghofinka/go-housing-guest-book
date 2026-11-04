@@ -5,8 +5,8 @@ Guards (satpam) check guests in and out and record a vehicle photo instead of ho
 cards. Homeowners see only their own house's visits. Admins manage accounts, houses, retention
 and audit.
 
-Status: the MVP backend is implemented and tested. Should/Could items are
-not started.
+Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
+fast lane), S2 (pre-registration) and S6 (search). The other Should/Could items are not started.
 
 ## Tech stack
 
@@ -49,6 +49,21 @@ not started.
   within their own house. Anonymized records no longer match by name or plate.
 - House numbers come from master data; unknown or inactive houses are rejected.
 
+**Pre-registration (PRD S2)**
+- An owner announces an expected guest (`POST /v1/pre-registrations`: `guest_name`, `expected_date`,
+  optional `plate`) and gets an 8-character code (no I, O, 0 or 1) to hand over. Clients draw the QR
+  from the code; the API does not render images.
+- A code is valid only on its expected date (WIB) and works once. At most 20 active
+  pre-registrations per house, up to 30 days ahead. Owners list, view and cancel their own
+  (`GET /v1/pre-registrations`, `GET /v1/pre-registrations/{id}`, `POST .../{id}/cancel`); cancelling
+  blanks the guest name and plate at once. Admins can list all.
+- Guards look a code up with `GET /v1/pre-registrations/by-code/{code}` (any case, hyphens and
+  spaces ignored; the reply says whether it is still valid) and check in with
+  `pre_registration_code` instead of typing the house and name. The house, name and plate come from the
+  pre-registration, and the category defaults to `tamu`. A plate still needs its vehicle photo.
+- Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
+  plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
+
 **Photos**
 - JPEG or PNG, up to 10 MB, re-encoded as JPEG on upload.
 - Stored on a private local directory (`PHOTO_DIR`), never as a static route. Served only through
@@ -80,8 +95,8 @@ not started.
 
 ### Not built yet
 
-Should/Could items (for example pre-registration endpoints, notifications, offline sync, admin
-2FA). There is no `openapi.yaml` yet.
+Should/Could items other than S1, S2 and S6 (for example notifications, owner confirm/reject,
+offline sync, admin 2FA). There is no `openapi.yaml` yet.
 
 ## Running the project
 

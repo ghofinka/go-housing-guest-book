@@ -81,6 +81,8 @@ type Result struct {
 	DryRun            bool  `json:"dry_run"`
 	PhotosDeleted     int   `json:"photos_deleted"`
 	RecordsAnonymized int   `json:"records_anonymized"`
+	// PreRegsAnonymized counts pre-registrations (PRD S2) whose guest name and plate were blanked.
+	PreRegsAnonymized int `json:"preregs_anonymized"`
 	// FilesFailed counts visits whose photo file could not be deleted; they keep
 	// their photo path and are retried by the next run.
 	FilesFailed int `json:"files_failed"`
@@ -95,6 +97,7 @@ type RunInfo struct {
 	DryRun            bool       `json:"dry_run"`
 	PhotosDeleted     int        `json:"photos_deleted"`
 	RecordsAnonymized int        `json:"records_anonymized"`
+	PreRegsAnonymized int        `json:"preregs_anonymized"`
 	Error             *string    `json:"error"`
 }
 
@@ -183,7 +186,7 @@ func (s *Service) Runs(ctx context.Context, limit int) ([]RunInfo, error) {
 	for _, r := range rows {
 		ri := RunInfo{
 			ID: r.ID, StartedAt: r.StartedAt.In(httpx.WIB), Trigger: r.Trigger, DryRun: r.DryRun,
-			PhotosDeleted: int(r.PhotosDeleted), RecordsAnonymized: int(r.RecordsAnonymized),
+			PhotosDeleted: int(r.PhotosDeleted), RecordsAnonymized: int(r.RecordsAnonymized), PreRegsAnonymized: int(r.PreregsAnonymized),
 		}
 		if r.FinishedAt.Valid {
 			t := r.FinishedAt.Time.In(httpx.WIB)
@@ -233,6 +236,7 @@ func (s *Service) Run(ctx context.Context, trigger Trigger, actor *uuid.UUID, dr
 	s.finish(ctx, trigger, actor, res, runErr)
 	slog.Info("retention run finished", "run_id", runID, "trigger", string(trigger), "dry_run", dryRun,
 		"photos_deleted", res.PhotosDeleted, "records_anonymized", res.RecordsAnonymized,
+		"preregs_anonymized", res.PreRegsAnonymized,
 		"files_failed", res.FilesFailed, "failed", runErr != nil)
 	return res, runErr
 }
@@ -245,7 +249,11 @@ func (s *Service) work(ctx context.Context, res *Result, photoCutoff, personalCu
 				return err
 			}
 			records, err := q.CountRecordsToAnonymize(ctx, personalCutoff)
-			res.PhotosDeleted, res.RecordsAnonymized = int(photos), int(records)
+			if err != nil {
+				return err
+			}
+			preRegs, err := q.CountPreRegistrationsToAnonymize(ctx, personalCutoff)
+			res.PhotosDeleted, res.RecordsAnonymized, res.PreRegsAnonymized = int(photos), int(records), int(preRegs)
 			return err
 		})
 	}
@@ -254,6 +262,9 @@ func (s *Service) work(ctx context.Context, res *Result, photoCutoff, personalCu
 	}
 	if err := s.anonymize(ctx, res, personalCutoff); err != nil {
 		return fmt.Errorf("anonymize records: %w", err)
+	}
+	if err := s.anonymizePreRegistrations(ctx, res, personalCutoff); err != nil {
+		return fmt.Errorf("anonymize pre-registrations: %w", err)
 	}
 	return nil
 }
@@ -331,6 +342,26 @@ func (s *Service) anonymize(ctx context.Context, res *Result, cutoff time.Time) 
 	}
 }
 
+// anonymizePreRegistrations blanks the guest name and plate of old pre-registrations, in batches,
+// with the same personal-data limit as visits.
+func (s *Service) anonymizePreRegistrations(ctx context.Context, res *Result, cutoff time.Time) error {
+	for {
+		var n int
+		err := db.InTx(ctx, s.pool, auth.RoleAdmin, nil, func(q *db.Queries) error {
+			ids, err := q.AnonymizePreRegistrationBatch(ctx, db.AnonymizePreRegistrationBatchParams{Cutoff: cutoff, BatchSize: batchSize})
+			n = len(ids)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		res.PreRegsAnonymized += n
+		if n == 0 {
+			return nil
+		}
+	}
+}
+
 // finish records the outcome in retention_runs and the audit log. It uses a
 // context that survives cancellation so an interrupted run still leaves a record.
 func (s *Service) finish(ctx context.Context, trigger Trigger, actor *uuid.UUID, res Result, runErr error) {
@@ -344,7 +375,8 @@ func (s *Service) finish(ctx context.Context, trigger Trigger, actor *uuid.UUID,
 		errText = pgtype.Text{String: fmt.Sprintf("%d photo file(s) could not be deleted; will retry on the next run", res.FilesFailed), Valid: true}
 	}
 	if err := q.FinishRetentionRun(ctx, db.FinishRetentionRunParams{
-		ID: res.RunID, PhotosDeleted: int32(res.PhotosDeleted), RecordsAnonymized: int32(res.RecordsAnonymized), Error: errText,
+		ID: res.RunID, PhotosDeleted: int32(res.PhotosDeleted), RecordsAnonymized: int32(res.RecordsAnonymized),
+		PreregsAnonymized: int32(res.PreRegsAnonymized), Error: errText,
 	}); err != nil {
 		slog.Error("retention: record run result", "run_id", res.RunID, "err", err)
 	}
@@ -354,8 +386,8 @@ func (s *Service) finish(ctx context.Context, trigger Trigger, actor *uuid.UUID,
 	}
 	if err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
 		UserID: user, Action: "retention_run",
-		Target: fmt.Sprintf("run:%d trigger:%s dry_run:%t photos:%d records:%d failed:%d",
-			res.RunID, trigger, res.DryRun, res.PhotosDeleted, res.RecordsAnonymized, res.FilesFailed),
+		Target: fmt.Sprintf("run:%d trigger:%s dry_run:%t photos:%d records:%d failed:%d preregs:%d",
+			res.RunID, trigger, res.DryRun, res.PhotosDeleted, res.RecordsAnonymized, res.FilesFailed, res.PreRegsAnonymized),
 	}); err != nil {
 		slog.Error("retention: audit run", "run_id", res.RunID, "err", err)
 	}

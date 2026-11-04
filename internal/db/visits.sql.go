@@ -35,22 +35,23 @@ func (q *Queries) CheckoutVisit(ctx context.Context, arg CheckoutVisitParams) (u
 
 const createVisit = `-- name: CreateVisit :one
 INSERT INTO visits (client_request_id, house_id, guest_name, category, purpose_note, vehicle_plate, checkin_by,
-                    vehicle_photo_path, face_photo_path)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                    vehicle_photo_path, face_photo_path, pre_registration_id)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 ON CONFLICT (client_request_id) DO NOTHING
 RETURNING id
 `
 
 type CreateVisitParams struct {
-	ClientRequestID  pgtype.UUID `json:"client_request_id"`
-	HouseID          uuid.UUID   `json:"house_id"`
-	GuestName        pgtype.Text `json:"guest_name"`
-	Category         string      `json:"category"`
-	PurposeNote      pgtype.Text `json:"purpose_note"`
-	VehiclePlate     pgtype.Text `json:"vehicle_plate"`
-	CheckinBy        uuid.UUID   `json:"checkin_by"`
-	VehiclePhotoPath pgtype.Text `json:"vehicle_photo_path"`
-	FacePhotoPath    pgtype.Text `json:"face_photo_path"`
+	ClientRequestID   pgtype.UUID `json:"client_request_id"`
+	HouseID           uuid.UUID   `json:"house_id"`
+	GuestName         pgtype.Text `json:"guest_name"`
+	Category          string      `json:"category"`
+	PurposeNote       pgtype.Text `json:"purpose_note"`
+	VehiclePlate      pgtype.Text `json:"vehicle_plate"`
+	CheckinBy         uuid.UUID   `json:"checkin_by"`
+	VehiclePhotoPath  pgtype.Text `json:"vehicle_photo_path"`
+	FacePhotoPath     pgtype.Text `json:"face_photo_path"`
+	PreRegistrationID pgtype.UUID `json:"pre_registration_id"`
 }
 
 // Returns no row when client_request_id already exists (idempotent retry).
@@ -65,6 +66,7 @@ func (q *Queries) CreateVisit(ctx context.Context, arg CreateVisitParams) (uuid.
 		arg.CheckinBy,
 		arg.VehiclePhotoPath,
 		arg.FacePhotoPath,
+		arg.PreRegistrationID,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)

@@ -9,11 +9,13 @@ deleted, and the public privacy notice (PRD M8). Written for the person who runs
 |---|---|---|---|
 | Vehicle and face photos | File deleted, photo link removed | **30 days** after check-in | `photo_retention_days` |
 | Guest name, plate, purpose note | Blanked (set to empty) | **90 days** after check-in | `personal_data_retention_days` |
+| Pre-registration guest name and plate (S2) | Blanked (set to empty); also blanked at once when the owner cancels | **90 days** after it was created | `personal_data_retention_days` |
 | Visit record itself (house, category, entry/exit times, status) | Kept, without the personal fields | kept | - |
 | Audit log | Kept (no personal data in it: ids, actions, times) | no limit yet | - |
 
 - Age is counted from the **check-in time**, whatever the status. A guest who was never checked out is
-  treated the same, so a forgotten check-out cannot keep data forever.
+  treated the same, so a forgotten check-out cannot keep data forever. A pre-registration is counted
+  from the day it was created, whether or not it was used.
 - Photos may not outlive the personal text: `photo_retention_days` must be <= `personal_data_retention_days`.
 - Allowed range: photos 1-365 days, personal data 1-1095 days.
 - Shortening a limit deletes data at the next run, and **deleted data cannot be recovered**.
@@ -27,7 +29,8 @@ A run:
 1. takes a database lock, so two runs never overlap (several API instances, or the API and the command);
 2. deletes photo files older than the photo limit and clears their paths, in batches. The file is deleted
    **first**; if a file cannot be deleted its path is kept and the next run tries again;
-3. blanks the personal fields of records older than the personal-data limit and marks them anonymized;
+3. blanks the personal fields of records, and the guest name and plate of pre-registrations, older than
+   the personal-data limit and marks them anonymized;
 4. writes a row to `retention_runs` and an audit entry `retention_run`, and logs only counts.
 
 It is safe to run again at any time: a second run finds nothing left to do.
@@ -41,7 +44,7 @@ POST /v1/retention/run?dry_run=true   # report only, changes nothing
 POST /v1/retention/run                # do it
 ```
 
-Returns `photos_deleted`, `records_anonymized`, `files_failed`. `409` means a run is already in progress.
+Returns `photos_deleted`, `records_anonymized`, `preregs_anonymized`, `files_failed`. `409` means a run is already in progress.
 
 **Command line** (for Windows Task Scheduler or cron; needs `DATABASE_URL` and `PHOTO_DIR`):
 
@@ -117,4 +120,5 @@ before go-live.
 
 - Retention of the audit log itself.
 - Cleanup of expired login sessions (`refresh_tokens`).
-- Personal data of pre-registrations (feature S2 is not built).
+- Erasure on request for a single pre-registration (visits have `DELETE /v1/visits/{id}/personal-data`;
+  pre-registrations are blanked by cancelling and by the daily job).
