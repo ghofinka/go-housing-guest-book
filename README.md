@@ -37,6 +37,10 @@ not started.
   A vehicle photo is required when the guest arrives by vehicle; the face photo follows the
   cluster's privacy policy setting. A client-generated `client_request_id` makes check-in
   idempotent.
+- Courier/ojol fast lane (PRD S1): for `kurir` and `ojol`, only `house_id` and `category` are
+  needed. The guest name is optional, the face-photo policy does not apply, and a plate does not
+  require a vehicle photo. Name and photos are still stored if the client sends them. Every other
+  category keeps the vehicle-photo rule.
 - Check-in and check-out times are set by the server, never by the client. Check-out is idempotent.
 - List visits with filters (`status`, `house_id`, `from`, `to`) and cursor pagination, newest first.
 - House numbers come from master data; unknown or inactive houses are rejected.

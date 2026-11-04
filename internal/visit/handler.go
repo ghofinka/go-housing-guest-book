@@ -117,7 +117,8 @@ func (h *Handler) checkIn(w http.ResponseWriter, r *http.Request) {
 		}
 		in.VehiclePlate = &plate
 	}
-	if in.VehiclePlate != nil && vehicleFile == nil {
+	// The courier/ojol fast lane keeps the plate photo optional (PRD S1).
+	if in.VehiclePlate != nil && vehicleFile == nil && !FastLane(in.Category) {
 		fields["vehicle_photo"] = "Foto kendaraan wajib jika tamu membawa kendaraan."
 	}
 	if len(fields) > 0 {

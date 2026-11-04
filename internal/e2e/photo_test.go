@@ -115,6 +115,21 @@ func TestVehiclePhotoRules(t *testing.T) {
 	// On foot: no plate, no photo needed.
 	assertStatus(t, doForm(t, "/v1/visits", guard.AccessToken, form(nil), nil), http.StatusCreated, "on foot")
 
+	// Courier/ojol fast lane (S1): a plate needs no photo. Every other category still does.
+	for _, cat := range []string{"kurir", "ojol"} {
+		fast := map[string]string{"house_id": houseID, "category": cat, "vehicle_plate": "B 7 FAST"}
+		assertStatus(t, do(t, "POST", "/v1/visits", guard.AccessToken,
+			map[string]any{"house_id": houseID, "category": cat, "vehicle_plate": "B 7 FAST"}),
+			http.StatusCreated, cat+" plate without photo (json)")
+		assertStatus(t, doForm(t, "/v1/visits", guard.AccessToken, fast, nil),
+			http.StatusCreated, cat+" plate without photo (form)")
+	}
+	for _, cat := range []string{"tukang", "keluarga", "lainnya"} {
+		assertStatus(t, do(t, "POST", "/v1/visits", guard.AccessToken,
+			map[string]any{"house_id": houseID, "guest_name": "X", "category": cat, "vehicle_plate": "B 8 A"}),
+			http.StatusUnprocessableEntity, cat+" plate without photo is still refused")
+	}
+
 	// With a photo: stored compressed, EXIF removed, linked to the visit.
 	big := testJPEG(t, 3000, 2000, "GPS-SECRET-1234")
 	rec = doForm(t, "/v1/visits", guard.AccessToken, form(map[string]string{"vehicle_plate": "b 1234 xyz"}),
