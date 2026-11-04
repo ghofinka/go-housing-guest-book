@@ -53,6 +53,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	reader := func(f http.HandlerFunc) http.Handler { return h.authn.Require(f, "guard", "admin", "owner") }
 	mux.Handle("POST /v1/visits", guard(h.checkIn))
 	mux.Handle("POST /v1/visits/{id}/checkout", guard(h.checkOut))
+	mux.Handle("POST /v1/visits/{id}/decision", h.authn.Require(http.HandlerFunc(h.decide), auth.RoleOwner))
 	mux.Handle("DELETE /v1/visits/{id}/personal-data", h.authn.Require(http.HandlerFunc(h.erase), auth.RoleAdmin))
 	mux.Handle("GET /v1/visits", reader(h.list))
 	mux.Handle("GET /v1/visits/{id}", reader(h.get))
@@ -274,6 +275,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Category = v
 	}
+	if v := q.Get("decision"); v != "" {
+		if v != DecisionPending && !ValidDecision(v) {
+			fields["decision"] = "Keputusan harus pending, approved, atau rejected."
+		}
+		f.Decision = v
+	}
 	if v := strings.TrimSpace(q.Get("name")); v != "" {
 		if n := utf8.RuneCountInString(v); n < minSearchLen || n > maxNameLen {
 			fields["name"] = "Nama pencarian " + strconv.Itoa(minSearchLen) + " sampai " + strconv.Itoa(maxNameLen) + " karakter."
@@ -301,8 +308,39 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 	httpx.JSON(w, http.StatusOK, res)
 }
 
+type decisionRequest struct {
+	Decision string `json:"decision"`
+}
+
+// decide records the owner's answer for a guest at the gate (PRD S4). It is advisory only.
+func (h *Handler) decide(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req decisionRequest
+	if !httpx.DecodeJSON(w, r, &req) {
+		return
+	}
+	if !ValidDecision(req.Decision) {
+		httpx.ValidationError(w, map[string]string{"decision": "Keputusan harus approved atau rejected."})
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	v, err := h.svc.Decide(r.Context(), p, id, req.Decision)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, v)
+}
+
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrVisitClosed):
+		httpx.Error(w, http.StatusConflict, "visit_closed", "Tamu sudah keluar, jadi keputusan tidak bisa dikirim lagi.")
+	case errors.Is(err, ErrDecisionMade):
+		httpx.Error(w, http.StatusConflict, "decision_already_made", "Keputusan untuk kunjungan ini sudah dikirim dan tidak bisa diubah.")
 	case errors.Is(err, ErrNotFound):
 		httpx.Error(w, http.StatusNotFound, "visit_not_found", "Data kunjungan tidak ditemukan.")
 	case errors.Is(err, ErrPhotoNotFound):

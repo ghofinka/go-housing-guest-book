@@ -268,23 +268,7 @@ func TestPreRegistrationIsolation(t *testing.T) {
 	assertStatus(t, do(t, "GET", "/v1/pre-registrations?status=bogus", f.ownerA.AccessToken, nil), http.StatusUnprocessableEntity, "bad status")
 
 	// The database enforces it too, whatever the service does: row-level security on the app role.
-	inRole := func(role string, house any, fn func(tx pgx.Tx)) {
-		t.Helper()
-		ctx := context.Background()
-		tx, err := app.Begin(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		defer tx.Rollback(ctx)
-		h := ""
-		if house != nil {
-			h = house.(string)
-		}
-		if _, err := tx.Exec(ctx, `SELECT set_config('app.role', $1, true), set_config('app.house_id', $2, true)`, role, h); err != nil {
-			t.Fatal(err)
-		}
-		fn(tx)
-	}
+	inRole := func(role string, house any, fn func(tx pgx.Tx)) { t.Helper(); asRole(t, role, house, fn) }
 	ctx := context.Background()
 	rows := func(tx pgx.Tx, id string) int {
 		var n int

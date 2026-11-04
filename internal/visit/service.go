@@ -26,6 +26,8 @@ var (
 	ErrPhotoNotFound     = errors.New("photo not found")
 	ErrHouseInvalid      = errors.New("house missing or inactive")
 	ErrFacePhotoRequired = errors.New("face photo required by cluster policy")
+	ErrVisitClosed       = errors.New("visit already checked out")
+	ErrDecisionMade      = errors.New("owner decision already made")
 	ErrBadCursor         = httpx.ErrBadCursor
 )
 
@@ -72,6 +74,83 @@ type Visit struct {
 	// Photo URLs are API paths that need the same Bearer token; they are not public links.
 	VehiclePhotoURL *string `json:"vehicle_photo_url"`
 	FacePhotoURL    *string `json:"face_photo_url"`
+	// OwnerDecision is the house owner's answer (PRD S4). It is advisory: the guard decides at the gate.
+	OwnerDecision OwnerDecision `json:"owner_decision"`
+}
+
+// Owner decision statuses, as stored in visit_decisions plus the default before an answer.
+const (
+	DecisionPending  = "pending"
+	DecisionApproved = "approved"
+	DecisionRejected = "rejected"
+)
+
+// OwnerDecision reports whether the owner has answered. A visit made from a pre-registration is
+// approved with source "pre_registration" until the owner says otherwise; Source is null while pending.
+type OwnerDecision struct {
+	Status    string     `json:"status"`
+	DecidedAt *time.Time `json:"decided_at"`
+	Source    *string    `json:"source"`
+}
+
+// ValidDecision reports whether s is an answer an owner may send.
+func ValidDecision(s string) bool { return s == DecisionApproved || s == DecisionRejected }
+
+// Decide records the owner's answer for one visit. The first answer stands: sending the same one
+// again is a no-op, a different one is refused. It is only allowed while the guest is inside.
+func (s *Service) Decide(ctx context.Context, p auth.Principal, id uuid.UUID, decision string) (Visit, error) {
+	var out Visit
+	err := db.InTx(ctx, s.pool, p.Role, p.HouseID, func(q *db.Queries) error {
+		r, err := q.GetVisit(ctx, id)
+		// Another house's visit looks exactly like a missing one (RLS hides it; the check is a second layer).
+		if errors.Is(err, pgx.ErrNoRows) || (err == nil && (p.HouseID == nil || r.HouseID != *p.HouseID)) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("get visit: %w", err)
+		}
+
+		existing, err := q.GetVisitDecision(ctx, id)
+		switch {
+		case err == nil:
+			if existing != decision {
+				return ErrDecisionMade
+			}
+			out = toVisit(row(r)) // same answer again: nothing to write
+			return nil
+		case !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("get decision: %w", err)
+		}
+		if r.Status != StatusInside {
+			return ErrVisitClosed
+		}
+
+		_, err = q.InsertVisitDecision(ctx, db.InsertVisitDecisionParams{
+			VisitID: id, HouseID: r.HouseID, Decision: decision, DecidedBy: p.UserID,
+		})
+		if errors.Is(err, pgx.ErrNoRows) { // answered concurrently
+			if existing, err = q.GetVisitDecision(ctx, id); err != nil {
+				return fmt.Errorf("get decision: %w", err)
+			}
+			if existing != decision {
+				return ErrDecisionMade
+			}
+		} else if err != nil {
+			return fmt.Errorf("insert decision: %w", err)
+		} else if err := audit(ctx, q, p.UserID, "visit_decided", id); err != nil {
+			return err
+		}
+		reloaded, err := q.GetVisit(ctx, id)
+		if err != nil {
+			return fmt.Errorf("reload visit: %w", err)
+		}
+		out = toVisit(row(reloaded))
+		return nil
+	})
+	if err != nil {
+		return Visit{}, wrap(err, "decide")
+	}
+	return forCaller(p, out), nil
 }
 
 type CheckInInput struct {
@@ -100,6 +179,8 @@ type ListFilter struct {
 	// Search filters (PRD S6). Empty means no filter. Name is a case-insensitive contains match,
 	// Plate a contains match on the plate without spaces (already upper-cased by the handler).
 	Category, Name, Plate string
+	// Decision filters by the owner's answer: pending, approved or rejected (PRD S4).
+	Decision string
 }
 
 // likeContains turns user text into a contains pattern for ILIKE, escaping the LIKE
@@ -437,7 +518,7 @@ func (s *Service) List(ctx context.Context, p auth.Principal, f ListFilter) (Lis
 			rs, err := q.ListInsideVisits(ctx, db.ListInsideVisitsParams{
 				HouseID: uuidOrNull(f.HouseID), AfterCheckinAt: afterAt, AfterID: afterID,
 				FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before),
-				Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), PageSize: size})
+				Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), Decision: textOrNullStr(f.Decision), PageSize: size})
 			for _, r := range rs {
 				rows = append(rows, row(r))
 			}
@@ -450,7 +531,7 @@ func (s *Service) List(ctx context.Context, p auth.Principal, f ListFilter) (Lis
 		rs, err := q.ListVisits(ctx, db.ListVisitsParams{
 			Status: status, HouseID: uuidOrNull(f.HouseID), AfterCheckinAt: afterAt, AfterID: afterID,
 			FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before),
-			Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), PageSize: size})
+			Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), Decision: textOrNullStr(f.Decision), PageSize: size})
 		for _, r := range rs {
 			rows = append(rows, row(r))
 		}
@@ -500,6 +581,7 @@ func wrap(err error, op string) error {
 	for _, known := range []error{
 		ErrNotFound, ErrPhotoNotFound, ErrHouseInvalid, ErrFacePhotoRequired, ErrVehiclePhotoRequired,
 		ErrPreRegNotFound, ErrPreRegUsed, ErrPreRegCancelled, ErrPreRegWrongDate, ErrPreRegHouseMismatch,
+		ErrVisitClosed, ErrDecisionMade,
 	} {
 		if errors.Is(err, known) {
 			return err
@@ -510,16 +592,25 @@ func wrap(err error, op string) error {
 
 func toVisit(r row) Visit {
 	v := Visit{
-		ID:           r.ID,
-		House:        HouseRef{ID: r.HouseID, Block: r.Block, Number: r.Number},
-		GuestName:    textPtr(r.GuestName),
-		Category:     r.Category,
-		PurposeNote:  textPtr(r.PurposeNote),
-		VehiclePlate: textPtr(r.VehiclePlate),
-		CheckinAt:    r.CheckinAt.In(httpx.WIB),
-		CheckinBy:    &r.CheckinBy,
-		Status:       r.Status,
-		Anonymized:   r.Anonymized,
+		ID:            r.ID,
+		House:         HouseRef{ID: r.HouseID, Block: r.Block, Number: r.Number},
+		GuestName:     textPtr(r.GuestName),
+		Category:      r.Category,
+		PurposeNote:   textPtr(r.PurposeNote),
+		VehiclePlate:  textPtr(r.VehiclePlate),
+		CheckinAt:     r.CheckinAt.In(httpx.WIB),
+		CheckinBy:     &r.CheckinBy,
+		Status:        r.Status,
+		Anonymized:    r.Anonymized,
+		OwnerDecision: OwnerDecision{Status: r.OwnerDecision},
+	}
+	if r.OwnerDecisionSource != "" {
+		src := r.OwnerDecisionSource
+		v.OwnerDecision.Source = &src
+	}
+	if r.OwnerDecidedAt.Valid {
+		t := r.OwnerDecidedAt.Time.In(httpx.WIB)
+		v.OwnerDecision.DecidedAt = &t
 	}
 	if r.HasVehiclePhoto {
 		u := "/v1/visits/" + r.ID.String() + "/photos/" + KindVehicle

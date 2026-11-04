@@ -103,3 +103,11 @@ type Visit struct {
 	PreRegistrationID pgtype.UUID        `json:"pre_registration_id"`
 	AnonymizedAt      pgtype.Timestamptz `json:"anonymized_at"`
 }
+
+type VisitDecision struct {
+	VisitID   uuid.UUID `json:"visit_id"`
+	HouseID   uuid.UUID `json:"house_id"`
+	Decision  string    `json:"decision"`
+	DecidedBy uuid.UUID `json:"decided_by"`
+	DecidedAt time.Time `json:"decided_at"`
+}

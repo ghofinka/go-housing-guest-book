@@ -77,29 +77,38 @@ const getVisit = `-- name: GetVisit :one
 SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_note,
        v.vehicle_plate, v.checkin_at, v.checkin_by, v.checkout_at, v.checkout_by, v.status,
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
-       (v.anonymized_at IS NOT NULL)::bool AS anonymized
+       (v.anonymized_at IS NOT NULL)::bool AS anonymized,
+       -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
+       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       d.decided_at AS owner_decided_at,
+       -- Empty while pending (never NULL, so it scans into a plain string).
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
 FROM visits v
 JOIN houses h ON h.id = v.house_id
+LEFT JOIN visit_decisions d ON d.visit_id = v.id
 WHERE v.id = $1
 `
 
 type GetVisitRow struct {
-	ID              uuid.UUID          `json:"id"`
-	HouseID         uuid.UUID          `json:"house_id"`
-	Block           string             `json:"block"`
-	Number          string             `json:"number"`
-	GuestName       pgtype.Text        `json:"guest_name"`
-	Category        string             `json:"category"`
-	PurposeNote     pgtype.Text        `json:"purpose_note"`
-	VehiclePlate    pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt       time.Time          `json:"checkin_at"`
-	CheckinBy       uuid.UUID          `json:"checkin_by"`
-	CheckoutAt      pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy      pgtype.UUID        `json:"checkout_by"`
-	Status          string             `json:"status"`
-	HasVehiclePhoto bool               `json:"has_vehicle_photo"`
-	HasFacePhoto    bool               `json:"has_face_photo"`
-	Anonymized      bool               `json:"anonymized"`
+	ID                  uuid.UUID          `json:"id"`
+	HouseID             uuid.UUID          `json:"house_id"`
+	Block               string             `json:"block"`
+	Number              string             `json:"number"`
+	GuestName           pgtype.Text        `json:"guest_name"`
+	Category            string             `json:"category"`
+	PurposeNote         pgtype.Text        `json:"purpose_note"`
+	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt           time.Time          `json:"checkin_at"`
+	CheckinBy           uuid.UUID          `json:"checkin_by"`
+	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
+	Status              string             `json:"status"`
+	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
+	HasFacePhoto        bool               `json:"has_face_photo"`
+	Anonymized          bool               `json:"anonymized"`
+	OwnerDecision       string             `json:"owner_decision"`
+	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource string             `json:"owner_decision_source"`
 }
 
 func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, error) {
@@ -122,6 +131,9 @@ func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, erro
 		&i.HasVehiclePhoto,
 		&i.HasFacePhoto,
 		&i.Anonymized,
+		&i.OwnerDecision,
+		&i.OwnerDecidedAt,
+		&i.OwnerDecisionSource,
 	)
 	return i, err
 }
@@ -130,29 +142,38 @@ const getVisitByClientRequestID = `-- name: GetVisitByClientRequestID :one
 SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_note,
        v.vehicle_plate, v.checkin_at, v.checkin_by, v.checkout_at, v.checkout_by, v.status,
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
-       (v.anonymized_at IS NOT NULL)::bool AS anonymized
+       (v.anonymized_at IS NOT NULL)::bool AS anonymized,
+       -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
+       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       d.decided_at AS owner_decided_at,
+       -- Empty while pending (never NULL, so it scans into a plain string).
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
 FROM visits v
 JOIN houses h ON h.id = v.house_id
+LEFT JOIN visit_decisions d ON d.visit_id = v.id
 WHERE v.client_request_id = $1
 `
 
 type GetVisitByClientRequestIDRow struct {
-	ID              uuid.UUID          `json:"id"`
-	HouseID         uuid.UUID          `json:"house_id"`
-	Block           string             `json:"block"`
-	Number          string             `json:"number"`
-	GuestName       pgtype.Text        `json:"guest_name"`
-	Category        string             `json:"category"`
-	PurposeNote     pgtype.Text        `json:"purpose_note"`
-	VehiclePlate    pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt       time.Time          `json:"checkin_at"`
-	CheckinBy       uuid.UUID          `json:"checkin_by"`
-	CheckoutAt      pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy      pgtype.UUID        `json:"checkout_by"`
-	Status          string             `json:"status"`
-	HasVehiclePhoto bool               `json:"has_vehicle_photo"`
-	HasFacePhoto    bool               `json:"has_face_photo"`
-	Anonymized      bool               `json:"anonymized"`
+	ID                  uuid.UUID          `json:"id"`
+	HouseID             uuid.UUID          `json:"house_id"`
+	Block               string             `json:"block"`
+	Number              string             `json:"number"`
+	GuestName           pgtype.Text        `json:"guest_name"`
+	Category            string             `json:"category"`
+	PurposeNote         pgtype.Text        `json:"purpose_note"`
+	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt           time.Time          `json:"checkin_at"`
+	CheckinBy           uuid.UUID          `json:"checkin_by"`
+	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
+	Status              string             `json:"status"`
+	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
+	HasFacePhoto        bool               `json:"has_face_photo"`
+	Anonymized          bool               `json:"anonymized"`
+	OwnerDecision       string             `json:"owner_decision"`
+	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource string             `json:"owner_decision_source"`
 }
 
 func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID pgtype.UUID) (GetVisitByClientRequestIDRow, error) {
@@ -175,6 +196,9 @@ func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID
 		&i.HasVehiclePhoto,
 		&i.HasFacePhoto,
 		&i.Anonymized,
+		&i.OwnerDecision,
+		&i.OwnerDecidedAt,
+		&i.OwnerDecisionSource,
 	)
 	return i, err
 }
@@ -201,9 +225,15 @@ const listInsideVisits = `-- name: ListInsideVisits :many
 SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_note,
        v.vehicle_plate, v.checkin_at, v.checkin_by, v.checkout_at, v.checkout_by, v.status,
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
-       (v.anonymized_at IS NOT NULL)::bool AS anonymized
+       (v.anonymized_at IS NOT NULL)::bool AS anonymized,
+       -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
+       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       d.decided_at AS owner_decided_at,
+       -- Empty while pending (never NULL, so it scans into a plain string).
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
 FROM visits v
 JOIN houses h ON h.id = v.house_id
+LEFT JOIN visit_decisions d ON d.visit_id = v.id
 WHERE v.status = 'inside'
   AND ($1::uuid IS NULL OR v.house_id = $1)
   AND ($2::timestamptz IS NULL
@@ -213,8 +243,10 @@ WHERE v.status = 'inside'
   AND ($6::text IS NULL OR v.category = $6)
   AND ($7::text IS NULL OR v.guest_name ILIKE $7)
   AND ($8::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE $8)
+  AND ($9::text IS NULL
+       OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = $9)
 ORDER BY v.checkin_at DESC, v.id DESC
-LIMIT $9
+LIMIT $10
 `
 
 type ListInsideVisitsParams struct {
@@ -226,26 +258,30 @@ type ListInsideVisitsParams struct {
 	Category       pgtype.Text        `json:"category"`
 	NameLike       pgtype.Text        `json:"name_like"`
 	PlateLike      pgtype.Text        `json:"plate_like"`
+	Decision       pgtype.Text        `json:"decision"`
 	PageSize       int32              `json:"page_size"`
 }
 
 type ListInsideVisitsRow struct {
-	ID              uuid.UUID          `json:"id"`
-	HouseID         uuid.UUID          `json:"house_id"`
-	Block           string             `json:"block"`
-	Number          string             `json:"number"`
-	GuestName       pgtype.Text        `json:"guest_name"`
-	Category        string             `json:"category"`
-	PurposeNote     pgtype.Text        `json:"purpose_note"`
-	VehiclePlate    pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt       time.Time          `json:"checkin_at"`
-	CheckinBy       uuid.UUID          `json:"checkin_by"`
-	CheckoutAt      pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy      pgtype.UUID        `json:"checkout_by"`
-	Status          string             `json:"status"`
-	HasVehiclePhoto bool               `json:"has_vehicle_photo"`
-	HasFacePhoto    bool               `json:"has_face_photo"`
-	Anonymized      bool               `json:"anonymized"`
+	ID                  uuid.UUID          `json:"id"`
+	HouseID             uuid.UUID          `json:"house_id"`
+	Block               string             `json:"block"`
+	Number              string             `json:"number"`
+	GuestName           pgtype.Text        `json:"guest_name"`
+	Category            string             `json:"category"`
+	PurposeNote         pgtype.Text        `json:"purpose_note"`
+	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt           time.Time          `json:"checkin_at"`
+	CheckinBy           uuid.UUID          `json:"checkin_by"`
+	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
+	Status              string             `json:"status"`
+	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
+	HasFacePhoto        bool               `json:"has_face_photo"`
+	Anonymized          bool               `json:"anonymized"`
+	OwnerDecision       string             `json:"owner_decision"`
+	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource string             `json:"owner_decision_source"`
 }
 
 // Hot path (guests currently inside): literal status so the partial index applies.
@@ -259,6 +295,7 @@ func (q *Queries) ListInsideVisits(ctx context.Context, arg ListInsideVisitsPara
 		arg.Category,
 		arg.NameLike,
 		arg.PlateLike,
+		arg.Decision,
 		arg.PageSize,
 	)
 	if err != nil {
@@ -285,6 +322,9 @@ func (q *Queries) ListInsideVisits(ctx context.Context, arg ListInsideVisitsPara
 			&i.HasVehiclePhoto,
 			&i.HasFacePhoto,
 			&i.Anonymized,
+			&i.OwnerDecision,
+			&i.OwnerDecidedAt,
+			&i.OwnerDecisionSource,
 		); err != nil {
 			return nil, err
 		}
@@ -300,9 +340,15 @@ const listVisits = `-- name: ListVisits :many
 SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_note,
        v.vehicle_plate, v.checkin_at, v.checkin_by, v.checkout_at, v.checkout_by, v.status,
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
-       (v.anonymized_at IS NOT NULL)::bool AS anonymized
+       (v.anonymized_at IS NOT NULL)::bool AS anonymized,
+       -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
+       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       d.decided_at AS owner_decided_at,
+       -- Empty while pending (never NULL, so it scans into a plain string).
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
 FROM visits v
 JOIN houses h ON h.id = v.house_id
+LEFT JOIN visit_decisions d ON d.visit_id = v.id
 WHERE ($1::text IS NULL OR v.status = $1)
   AND ($2::uuid IS NULL OR v.house_id = $2)
   AND ($3::timestamptz IS NULL
@@ -312,8 +358,10 @@ WHERE ($1::text IS NULL OR v.status = $1)
   AND ($7::text IS NULL OR v.category = $7)
   AND ($8::text IS NULL OR v.guest_name ILIKE $8)
   AND ($9::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE $9)
+  AND ($10::text IS NULL
+       OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = $10)
 ORDER BY v.checkin_at DESC, v.id DESC
-LIMIT $10
+LIMIT $11
 `
 
 type ListVisitsParams struct {
@@ -326,26 +374,30 @@ type ListVisitsParams struct {
 	Category       pgtype.Text        `json:"category"`
 	NameLike       pgtype.Text        `json:"name_like"`
 	PlateLike      pgtype.Text        `json:"plate_like"`
+	Decision       pgtype.Text        `json:"decision"`
 	PageSize       int32              `json:"page_size"`
 }
 
 type ListVisitsRow struct {
-	ID              uuid.UUID          `json:"id"`
-	HouseID         uuid.UUID          `json:"house_id"`
-	Block           string             `json:"block"`
-	Number          string             `json:"number"`
-	GuestName       pgtype.Text        `json:"guest_name"`
-	Category        string             `json:"category"`
-	PurposeNote     pgtype.Text        `json:"purpose_note"`
-	VehiclePlate    pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt       time.Time          `json:"checkin_at"`
-	CheckinBy       uuid.UUID          `json:"checkin_by"`
-	CheckoutAt      pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy      pgtype.UUID        `json:"checkout_by"`
-	Status          string             `json:"status"`
-	HasVehiclePhoto bool               `json:"has_vehicle_photo"`
-	HasFacePhoto    bool               `json:"has_face_photo"`
-	Anonymized      bool               `json:"anonymized"`
+	ID                  uuid.UUID          `json:"id"`
+	HouseID             uuid.UUID          `json:"house_id"`
+	Block               string             `json:"block"`
+	Number              string             `json:"number"`
+	GuestName           pgtype.Text        `json:"guest_name"`
+	Category            string             `json:"category"`
+	PurposeNote         pgtype.Text        `json:"purpose_note"`
+	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt           time.Time          `json:"checkin_at"`
+	CheckinBy           uuid.UUID          `json:"checkin_by"`
+	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
+	Status              string             `json:"status"`
+	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
+	HasFacePhoto        bool               `json:"has_face_photo"`
+	Anonymized          bool               `json:"anonymized"`
+	OwnerDecision       string             `json:"owner_decision"`
+	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource string             `json:"owner_decision_source"`
 }
 
 func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListVisitsRow, error) {
@@ -359,6 +411,7 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 		arg.Category,
 		arg.NameLike,
 		arg.PlateLike,
+		arg.Decision,
 		arg.PageSize,
 	)
 	if err != nil {
@@ -385,6 +438,9 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 			&i.HasVehiclePhoto,
 			&i.HasFacePhoto,
 			&i.Anonymized,
+			&i.OwnerDecision,
+			&i.OwnerDecidedAt,
+			&i.OwnerDecisionSource,
 		); err != nil {
 			return nil, err
 		}

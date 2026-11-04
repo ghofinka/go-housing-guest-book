@@ -6,7 +6,8 @@ cards. Homeowners see only their own house's visits. Admins manage accounts, hou
 and audit.
 
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
-fast lane), S2 (pre-registration) and S6 (search). The other Should/Could items are not started.
+fast lane), S2 (pre-registration), S4 (owner confirm/reject) and S6 (search). The other Should/Could
+items are not started.
 
 ## Tech stack
 
@@ -64,6 +65,18 @@ fast lane), S2 (pre-registration) and S6 (search). The other Should/Could items 
 - Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
   plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
 
+**Owner confirm/reject (PRD S4)**
+- The owner answers for a guest who is inside: `POST /v1/visits/{id}/decision` with
+  `{"decision": "approved"}` or `"rejected"`. Every visit carries `owner_decision`
+  (`status` pending, approved or rejected; `decided_at`; `source` owner or pre_registration), so the
+  guard sees the answer on the visit and in the inside list. `GET /v1/visits?decision=pending` lists
+  what still waits for an answer.
+- The first answer stands: repeating it is harmless, a different one is refused (409). No answer after
+  the guest has left (409). Another house's visit answers 404, and only owners can answer.
+- A visit made from a pre-registration is approved from the start; the owner may still reject it once.
+- The answer is advice only: it never blocks check-in or check-out. There is no push notification yet
+  (S3), so owners poll `GET /v1/visits?status=inside&decision=pending`.
+
 **Photos**
 - JPEG or PNG, up to 10 MB, re-encoded as JPEG on upload.
 - Stored on a private local directory (`PHOTO_DIR`), never as a static route. Served only through
@@ -95,8 +108,8 @@ fast lane), S2 (pre-registration) and S6 (search). The other Should/Could items 
 
 ### Not built yet
 
-Should/Could items other than S1, S2 and S6 (for example notifications, owner confirm/reject,
-offline sync, admin 2FA). There is no `openapi.yaml` yet.
+Should/Could items other than S1, S2, S4 and S6 (for example notifications, offline sync, admin
+2FA). There is no `openapi.yaml` yet.
 
 ## Running the project
 
