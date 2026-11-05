@@ -28,6 +28,20 @@ type House struct {
 	UpdatedAt time.Time `json:"updated_at"`
 }
 
+type NotificationOutbox struct {
+	ID            int64              `json:"id"`
+	Kind          string             `json:"kind"`
+	VisitID       uuid.UUID          `json:"visit_id"`
+	UserID        uuid.UUID          `json:"user_id"`
+	Status        string             `json:"status"`
+	Attempts      int32              `json:"attempts"`
+	NextAttemptAt time.Time          `json:"next_attempt_at"`
+	LockedUntil   pgtype.Timestamptz `json:"locked_until"`
+	SentAt        pgtype.Timestamptz `json:"sent_at"`
+	LastError     pgtype.Text        `json:"last_error"`
+	CreatedAt     time.Time          `json:"created_at"`
+}
+
 type PreRegistration struct {
 	ID           uuid.UUID          `json:"id"`
 	HouseID      uuid.UUID          `json:"house_id"`

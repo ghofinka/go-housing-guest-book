@@ -64,7 +64,8 @@ func TestVisitSearch(t *testing.T) {
 
 	// Category, alone and combined with the other filters.
 	expect("category kurir in house", search(guard.AccessToken, url.Values{"category": {"kurir"}, "house_id": {houseA}}), want(kurirA))
-	expect("category + name", search(guard.AccessToken, url.Values{"category": {"tukang"}, "name": {"zq"}}), want(sitiA))
+	// Scoped to this test's house: other tests also create tukang visits whose names start with "Zq".
+	expect("category + name", search(guard.AccessToken, url.Values{"category": {"tukang"}, "name": {"zq"}, "house_id": {houseA}}), want(sitiA))
 
 	// Status: the inside list (partial-index query) and the general list both honour the search.
 	assertStatus(t, do(t, "POST", "/v1/visits/"+sitiA.ID+"/checkout", guard.AccessToken, nil), http.StatusOK, "checkout")

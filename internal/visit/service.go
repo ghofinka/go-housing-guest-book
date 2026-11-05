@@ -18,6 +18,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/auth"
 	"github.com/ghofinka/go-housing-guest-book/internal/db"
 	"github.com/ghofinka/go-housing-guest-book/internal/httpx"
+	"github.com/ghofinka/go-housing-guest-book/internal/notify"
 	"github.com/ghofinka/go-housing-guest-book/internal/photo"
 )
 
@@ -261,10 +262,44 @@ type ListResult struct {
 type Service struct {
 	pool   *pgxpool.Pool
 	photos photo.Store
+	// notify makes check-in queue an email to the house owners (PRD S3). It is off unless a mail
+	// server is configured, so nothing piles up in the outbox with no worker to send it.
+	notify bool
 }
 
-func NewService(pool *pgxpool.Pool, photos photo.Store) *Service {
-	return &Service{pool: pool, photos: photos}
+// Option adjusts a Service.
+type Option func(*Service)
+
+// WithNotifications makes every check-in queue an arrival email for the house's owners.
+func WithNotifications() Option { return func(s *Service) { s.notify = true } }
+
+func NewService(pool *pgxpool.Pool, photos photo.Store, opts ...Option) *Service {
+	s := &Service{pool: pool, photos: photos}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
+
+// enqueueArrival queues the "guest arrived" email for every active owner of the house, in the
+// check-in transaction. Courier and ojol visits are skipped unless an admin turned them on.
+func (s *Service) enqueueArrival(ctx context.Context, q *db.Queries, visitID, houseID uuid.UUID, category string) error {
+	if !s.notify {
+		return nil
+	}
+	if FastLane(category) {
+		on, err := notify.FastLaneEnabled(ctx, q)
+		if err != nil {
+			return err
+		}
+		if !on {
+			return nil
+		}
+	}
+	if err := q.EnqueueVisitArrived(ctx, db.EnqueueVisitArrivedParams{VisitID: visitID, HouseID: houseID}); err != nil {
+		return fmt.Errorf("queue arrival notification: %w", err)
+	}
+	return nil
 }
 
 // CheckIn records a guest entering. The entry time is the database clock, never client input.
@@ -389,6 +424,9 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			}); err != nil {
 				return err
 			}
+		}
+		if err := s.enqueueArrival(ctx, q, id, in.HouseID, in.Category); err != nil {
+			return err
 		}
 		row, err := q.GetVisit(ctx, id)
 		if err != nil {

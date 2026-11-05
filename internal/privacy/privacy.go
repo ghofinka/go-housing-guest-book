@@ -61,9 +61,26 @@ type Editable struct {
 	ExtraNote string `json:"extra_note"`
 }
 
-type Service struct{ pool *pgxpool.Pool }
+type Service struct {
+	pool *pgxpool.Pool
+	// ownerEmail is true when the house owner is emailed that a guest arrived (PRD S3). The notice must
+	// say so, because that email leaves the system and the retention job cannot recall it.
+	ownerEmail bool
+}
 
-func NewService(pool *pgxpool.Pool) *Service { return &Service{pool: pool} }
+// Option adjusts a Service.
+type Option func(*Service)
+
+// WithOwnerEmail makes the notice disclose that owners are emailed when a guest arrives.
+func WithOwnerEmail() Option { return func(s *Service) { s.ownerEmail = true } }
+
+func NewService(pool *pgxpool.Pool, opts ...Option) *Service {
+	s := &Service{pool: pool}
+	for _, o := range opts {
+		o(s)
+	}
+	return s
+}
 
 var allKeys = []string{
 	retention.SettingPhotoDays, retention.SettingPersonalDays, settingFaceRequired, settingContact, settingExtraNote,
@@ -87,11 +104,11 @@ func (s *Service) Notice(ctx context.Context) (Notice, error) {
 			updated = r.UpdatedAt
 		}
 	}
-	return build(days, vals[settingFaceRequired] == "true", strings.TrimSpace(vals[settingContact]),
+	return build(days, vals[settingFaceRequired] == "true", s.ownerEmail, strings.TrimSpace(vals[settingContact]),
 		strings.TrimSpace(vals[settingExtraNote]), updated.In(httpx.WIB)), nil
 }
 
-func build(days retention.Settings, faceRequired bool, contact, note string, updated time.Time) Notice {
+func build(days retention.Settings, faceRequired, ownerEmail bool, contact, note string, updated time.Time) Notice {
 	n := Notice{Title: "Pemberitahuan Privasi Buku Tamu Digital", UpdatedAt: updated, Contact: contact}
 	n.Retention.PhotoDays, n.Retention.PersonalDataDays = days.PhotoDays, days.PersonalDataDays
 
@@ -113,10 +130,7 @@ func build(days retention.Settings, faceRequired bool, contact, note string, upd
 			"Waktu masuk dan waktu keluar, serta nama petugas jaga yang mencatat.",
 			"Kami tidak menahan KTP, SIM, atau identitas fisik Anda.",
 		}},
-		{"Untuk apa", []string{
-			"Menjaga keamanan perumahan dengan mencatat siapa yang masuk, ke rumah mana, dan kapan.",
-			"Data tidak dipakai untuk tujuan lain.",
-		}},
+		{"Untuk apa", purposeLines(ownerEmail)},
 		{"Siapa yang dapat melihat", []string{
 			"Petugas jaga dan pengurus yang berwenang.",
 			"Pemilik rumah hanya dapat melihat tamu yang datang ke rumahnya sendiri.",
@@ -133,10 +147,27 @@ func build(days retention.Settings, faceRequired bool, contact, note string, upd
 		}},
 		{"Kontak", []string{contactLine}},
 	}
+	if ownerEmail {
+		// Inserted after "Siapa yang dapat melihat": this is a recipient outside the system.
+		n.Sections = append(n.Sections[:3], append([]Section{{"Pemberitahuan ke pemilik rumah", []string{
+			"Saat tamu dicatat, pemilik rumah yang dituju diberi tahu lewat email.",
+			"Email hanya memuat kategori tamu dan jam kedatangan, tanpa nama dan tanpa plat nomor.",
+			"Email yang sudah terkirim berada di luar sistem ini dan tidak ikut terhapus oleh penghapusan otomatis.",
+		}}}, n.Sections[3:]...)...)
+	}
 	if note != "" {
 		n.Sections = append(n.Sections, Section{"Catatan dari pengurus", []string{note}})
 	}
 	return n
+}
+
+// purposeLines is the "Untuk apa" section; the promise of no other use must stay true when owners are emailed.
+func purposeLines(ownerEmail bool) []string {
+	lines := []string{"Menjaga keamanan perumahan dengan mencatat siapa yang masuk, ke rumah mana, dan kapan."}
+	if ownerEmail {
+		return append(lines, "Data tidak dipakai untuk tujuan lain, selain memberi tahu pemilik rumah yang dituju.")
+	}
+	return append(lines, "Data tidak dipakai untuk tujuan lain.")
 }
 
 // Editable returns the admin-editable fields.

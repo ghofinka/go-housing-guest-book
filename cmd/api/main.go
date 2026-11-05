@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/config"
 	"github.com/ghofinka/go-housing-guest-book/internal/house"
 	"github.com/ghofinka/go-housing-guest-book/internal/longstay"
+	"github.com/ghofinka/go-housing-guest-book/internal/notify"
 	"github.com/ghofinka/go-housing-guest-book/internal/photo"
 	"github.com/ghofinka/go-housing-guest-book/internal/prereg"
 	"github.com/ghofinka/go-housing-guest-book/internal/privacy"
@@ -62,6 +64,25 @@ func run() error {
 	}
 	authn := auth.NewAuthenticator(tokens, authSvc)
 
+	// Owner notifications (PRD S3) run only when a mail server is configured. The worker is awaited on the
+	// way out, so a send that is under way is recorded before the pool closes (defers run last-in first).
+	notifyEnabled := cfg.SMTP.Enabled()
+	visitOpts, privacyOpts := []visit.Option{}, []privacy.Option{}
+	if notifyEnabled {
+		visitOpts = append(visitOpts, visit.WithNotifications())
+		privacyOpts = append(privacyOpts, privacy.WithOwnerEmail())
+		workerCtx, stopWorker := context.WithCancel(ctx)
+		var workerDone sync.WaitGroup
+		workerDone.Add(1)
+		go func() {
+			defer workerDone.Done()
+			notify.NewWorker(pool, notify.NewSMTPSender(cfg.SMTP)).Run(workerCtx)
+		}()
+		defer func() { stopWorker(); workerDone.Wait() }()
+	} else {
+		slog.Warn("owner notifications disabled (SMTP_HOST is not set): owners are not emailed when a guest arrives")
+	}
+
 	retentionSvc := retention.NewService(pool, photos)
 	if cfg.RetentionEnabled {
 		hour, minute, err := retention.ParseRunAt(cfg.RetentionRunAt)
@@ -82,12 +103,13 @@ func run() error {
 				auth.NewHandler(authSvc, authn),
 				house.NewHandler(house.NewService(pool), authn),
 				user.NewHandler(user.NewService(pool), authn),
-				visit.NewHandler(visit.NewService(pool, photos), authn),
+				visit.NewHandler(visit.NewService(pool, photos, visitOpts...), authn),
 				prereg.NewHandler(prereg.NewService(pool), authn),
 				longstay.NewHandler(longstay.NewService(pool), authn),
+				notify.NewHandler(notify.NewSettingsService(pool, notifyEnabled), authn),
 				audit.NewHandler(audit.NewService(pool), authn),
 				retention.NewHandler(retentionSvc, authn),
-				privacy.NewHandler(privacy.NewService(pool), authn),
+				privacy.NewHandler(privacy.NewService(pool, privacyOpts...), authn),
 			},
 		}),
 		ReadHeaderTimeout: 5 * time.Second,

@@ -116,6 +116,18 @@ before go-live.
 - [ ] Print the poster and generate a QR code that points to `https://<your-host>/privacy`; post it at the gate.
 - [ ] Do a dry run of the retention job and check `GET /v1/settings/retention`.
 
+## Owner notification emails (S3)
+
+When SMTP is configured, an owner is emailed that a guest arrived. The email names no guest and no plate
+(category and time only), so there is nothing personal to expire in the queue itself: the
+`notification_outbox` table holds ids and times, and its finished rows (sent, failed or skipped) are
+deleted after 30 days by the notification worker, not by the retention job.
+
+**An email that has been delivered cannot be recalled.** It sits in the owner's mailbox and on the mail
+provider's servers, outside this system, so the retention job and an erasure request do not reach it.
+This is why the message is kept minimal and why the public privacy notice discloses it (the line appears
+only when SMTP is configured).
+
 ## Not covered yet
 
 - Retention of the audit log itself.

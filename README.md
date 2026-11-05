@@ -6,8 +6,8 @@ cards. Homeowners see only their own house's visits. Admins manage accounts, hou
 and audit.
 
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
-fast lane), S2 (pre-registration), S4 (owner confirm/reject), S5 (offline sync), S6 (search) and S7
-(long-stay flag). The other Should/Could items are not started.
+fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5
+(offline sync), S6 (search) and S7 (long-stay flag). The other Should/Could items are not started.
 
 ## Tech stack
 
@@ -64,6 +64,23 @@ fast lane), S2 (pre-registration), S4 (owner confirm/reject), S5 (offline sync),
   pre-registration, and the category defaults to `tamu`. A plate still needs its vehicle photo.
 - Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
   plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
+
+**Owner notifications by email (PRD S3)**
+- When a guest is recorded, every active owner of that house is emailed: "Ada tamu (kategori) tiba di
+  rumah Anda pukul HH:MM WIB. Buka aplikasi untuk menyetujui atau menolak." The email names **no guest**
+  and no plate, only the category and the time. It goes to the owner's login email.
+- Courier and ojol visits do not notify unless an admin turns it on: `GET/PUT /v1/settings/notifications`
+  (`{"notify_fast_lane": true}`, audited). The same GET shows whether notifications are enabled and how many
+  emails are pending, sent, failed or skipped. Pre-registered visits do notify.
+- Check-in only writes a row to an outbox in its own transaction, so a slow or broken mail server never
+  slows the guard down, and a refused check-in queues nothing. A worker inside the API sends the emails
+  every 15 seconds, retrying up to 5 times with backoff (1, 2, 4, 8 minutes) before marking one failed.
+  It is safe to run several API instances. Finished rows older than 30 days are deleted.
+- It is **off unless SMTP is configured** (see `SMTP_*` below). The public privacy notice then also says
+  that owners are emailed. An email already delivered is outside the system and cannot be recalled by
+  the retention job.
+- Not built: per-owner opt-out (an admin can deactivate the account), delivery receipts, WhatsApp or push.
+  The sender is an interface, so another channel can be added without touching check-in.
 
 **Offline sync (PRD S5)**
 - The guard post can lose signal, so the client queues the same requests it would send online and
@@ -137,8 +154,7 @@ fast lane), S2 (pre-registration), S4 (owner confirm/reject), S5 (offline sync),
 
 ### Not built yet
 
-Should/Could items other than S1, S2, S4, S5, S6 and S7 (for example notifications, report export,
-admin 2FA). There is no `openapi.yaml` yet.
+Report export (S8), the Could-have items and admin 2FA. There is no `openapi.yaml` yet.
 
 ## Running the project
 
@@ -165,6 +181,13 @@ Edit `.env` and set at least:
 Optional (defaults in `.env.example`): `HTTP_ADDR` (`:8080`), `ACCESS_TOKEN_TTL` (`15m`),
 `REFRESH_TOKEN_TTL` (`168h`), `CORS_ORIGIN` (empty = no CORS headers), `PHOTO_DIR`
 (`data/photos`), `RETENTION_ENABLED` (`true`), `RETENTION_RUN_AT` (`02:00`, WIB).
+
+Owner email notifications are optional. Leave `SMTP_HOST` empty to keep them off (the API logs one
+warning at startup). To turn them on set `SMTP_HOST`, `SMTP_FROM` (for example
+`Buku Tamu <noreply@example.com>`), and optionally `SMTP_PORT` (default 587), `SMTP_USERNAME` and
+`SMTP_PASSWORD` (set together). Port 465 uses TLS from the start; any other port needs STARTTLS when a
+login is configured, because credentials are never sent over a plaintext connection. A half-given
+configuration (for example a port without a host) stops the API at startup with a clear message.
 
 `.env` is git-ignored. The Go code reads real environment variables, not the file, so start the
 app with `make run` or `scripts/run.ps1`, which load `.env.example` and then `.env` first. A plain
