@@ -76,6 +76,9 @@ type Visit struct {
 	FacePhotoURL    *string `json:"face_photo_url"`
 	// OwnerDecision is the house owner's answer (PRD S4). It is advisory: the guard decides at the gate.
 	OwnerDecision OwnerDecision `json:"owner_decision"`
+	// Overstay is true while the guest is still inside after the configured limit (PRD S7, setting
+	// long_stay_hours, default 12), counted from the server's check-in time.
+	Overstay bool `json:"overstay"`
 }
 
 // Owner decision statuses, as stored in visit_decisions plus the default before an answer.
@@ -181,6 +184,8 @@ type ListFilter struct {
 	Category, Name, Plate string
 	// Decision filters by the owner's answer: pending, approved or rejected (PRD S4).
 	Decision string
+	// OverstayOnly keeps only guests still inside after the long-stay limit (PRD S7).
+	OverstayOnly bool
 }
 
 // likeContains turns user text into a contains pattern for ILIKE, escaping the LIKE
@@ -518,7 +523,8 @@ func (s *Service) List(ctx context.Context, p auth.Principal, f ListFilter) (Lis
 			rs, err := q.ListInsideVisits(ctx, db.ListInsideVisitsParams{
 				HouseID: uuidOrNull(f.HouseID), AfterCheckinAt: afterAt, AfterID: afterID,
 				FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before),
-				Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), Decision: textOrNullStr(f.Decision), PageSize: size})
+				Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), Decision: textOrNullStr(f.Decision),
+				OverstayOnly: pgtype.Bool{Bool: f.OverstayOnly, Valid: f.OverstayOnly}, PageSize: size})
 			for _, r := range rs {
 				rows = append(rows, row(r))
 			}
@@ -531,7 +537,8 @@ func (s *Service) List(ctx context.Context, p auth.Principal, f ListFilter) (Lis
 		rs, err := q.ListVisits(ctx, db.ListVisitsParams{
 			Status: status, HouseID: uuidOrNull(f.HouseID), AfterCheckinAt: afterAt, AfterID: afterID,
 			FromAt: timestamptzOrNull(f.From), BeforeAt: timestamptzOrNull(f.Before),
-			Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), Decision: textOrNullStr(f.Decision), PageSize: size})
+			Category: textOrNullStr(f.Category), NameLike: likeContains(f.Name), PlateLike: likeContains(f.Plate), Decision: textOrNullStr(f.Decision),
+			OverstayOnly: pgtype.Bool{Bool: f.OverstayOnly, Valid: f.OverstayOnly}, PageSize: size})
 		for _, r := range rs {
 			rows = append(rows, row(r))
 		}
@@ -602,6 +609,7 @@ func toVisit(r row) Visit {
 		CheckinBy:     &r.CheckinBy,
 		Status:        r.Status,
 		Anonymized:    r.Anonymized,
+		Overstay:      r.Overstay,
 		OwnerDecision: OwnerDecision{Status: r.OwnerDecision},
 	}
 	if r.OwnerDecisionSource != "" {

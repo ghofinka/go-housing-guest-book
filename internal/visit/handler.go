@@ -275,6 +275,13 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		}
 		f.Category = v
 	}
+	switch v := q.Get("overstay"); v {
+	case "", "false":
+	case "true":
+		f.OverstayOnly = true
+	default:
+		fields["overstay"] = "overstay harus true atau false."
+	}
 	if v := q.Get("decision"); v != "" {
 		if v != DecisionPending && !ValidDecision(v) {
 			fields["decision"] = "Keputusan harus pending, approved, atau rejected."

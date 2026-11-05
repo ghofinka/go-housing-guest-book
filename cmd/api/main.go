@@ -17,6 +17,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/auth"
 	"github.com/ghofinka/go-housing-guest-book/internal/config"
 	"github.com/ghofinka/go-housing-guest-book/internal/house"
+	"github.com/ghofinka/go-housing-guest-book/internal/longstay"
 	"github.com/ghofinka/go-housing-guest-book/internal/photo"
 	"github.com/ghofinka/go-housing-guest-book/internal/prereg"
 	"github.com/ghofinka/go-housing-guest-book/internal/privacy"
@@ -83,6 +84,7 @@ func run() error {
 				user.NewHandler(user.NewService(pool), authn),
 				visit.NewHandler(visit.NewService(pool, photos), authn),
 				prereg.NewHandler(prereg.NewService(pool), authn),
+				longstay.NewHandler(longstay.NewService(pool), authn),
 				audit.NewHandler(audit.NewService(pool), authn),
 				retention.NewHandler(retentionSvc, authn),
 				privacy.NewHandler(privacy.NewService(pool), authn),

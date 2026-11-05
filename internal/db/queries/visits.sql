@@ -15,7 +15,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -30,7 +32,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -53,7 +57,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -68,6 +74,8 @@ WHERE v.status = 'inside'
   AND (sqlc.narg('plate_like')::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE sqlc.narg('plate_like'))
   AND (sqlc.narg('decision')::text IS NULL
        OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = sqlc.narg('decision'))
+  AND (sqlc.narg('overstay_only')::bool IS NOT TRUE
+       OR (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours())))
 ORDER BY v.checkin_at DESC, v.id DESC
 LIMIT sqlc.arg('page_size');
 
@@ -80,7 +88,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -95,6 +105,8 @@ WHERE (sqlc.narg('status')::text IS NULL OR v.status = sqlc.narg('status'))
   AND (sqlc.narg('plate_like')::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE sqlc.narg('plate_like'))
   AND (sqlc.narg('decision')::text IS NULL
        OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = sqlc.narg('decision'))
+  AND (sqlc.narg('overstay_only')::bool IS NOT TRUE
+       OR (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours())))
 ORDER BY v.checkin_at DESC, v.id DESC
 LIMIT sqlc.arg('page_size');
 

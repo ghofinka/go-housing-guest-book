@@ -23,6 +23,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/audit"
 	"github.com/ghofinka/go-housing-guest-book/internal/auth"
 	"github.com/ghofinka/go-housing-guest-book/internal/house"
+	"github.com/ghofinka/go-housing-guest-book/internal/longstay"
 	"github.com/ghofinka/go-housing-guest-book/internal/photo"
 	"github.com/ghofinka/go-housing-guest-book/internal/prereg"
 	"github.com/ghofinka/go-housing-guest-book/internal/privacy"
@@ -124,6 +125,7 @@ func run(m *testing.M) (int, error) {
 		user.NewHandler(user.NewService(app), authn),
 		visit.NewHandler(visit.NewService(app, photos), authn),
 		prereg.NewHandler(prereg.NewService(app), authn),
+		longstay.NewHandler(longstay.NewService(app), authn),
 		audit.NewHandler(audit.NewService(app), authn),
 		retention.NewHandler(retention.NewService(app, photos), authn),
 		privacy.NewHandler(privacy.NewService(app), authn),

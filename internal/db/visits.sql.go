@@ -82,7 +82,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -109,6 +111,7 @@ type GetVisitRow struct {
 	OwnerDecision       string             `json:"owner_decision"`
 	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
 	OwnerDecisionSource string             `json:"owner_decision_source"`
+	Overstay            bool               `json:"overstay"`
 }
 
 func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, error) {
@@ -134,6 +137,7 @@ func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, erro
 		&i.OwnerDecision,
 		&i.OwnerDecidedAt,
 		&i.OwnerDecisionSource,
+		&i.Overstay,
 	)
 	return i, err
 }
@@ -147,7 +151,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -174,6 +180,7 @@ type GetVisitByClientRequestIDRow struct {
 	OwnerDecision       string             `json:"owner_decision"`
 	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
 	OwnerDecisionSource string             `json:"owner_decision_source"`
+	Overstay            bool               `json:"overstay"`
 }
 
 func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID pgtype.UUID) (GetVisitByClientRequestIDRow, error) {
@@ -199,6 +206,7 @@ func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID
 		&i.OwnerDecision,
 		&i.OwnerDecidedAt,
 		&i.OwnerDecisionSource,
+		&i.Overstay,
 	)
 	return i, err
 }
@@ -230,7 +238,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -245,8 +255,10 @@ WHERE v.status = 'inside'
   AND ($8::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE $8)
   AND ($9::text IS NULL
        OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = $9)
+  AND ($10::bool IS NOT TRUE
+       OR (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours())))
 ORDER BY v.checkin_at DESC, v.id DESC
-LIMIT $10
+LIMIT $11
 `
 
 type ListInsideVisitsParams struct {
@@ -259,6 +271,7 @@ type ListInsideVisitsParams struct {
 	NameLike       pgtype.Text        `json:"name_like"`
 	PlateLike      pgtype.Text        `json:"plate_like"`
 	Decision       pgtype.Text        `json:"decision"`
+	OverstayOnly   pgtype.Bool        `json:"overstay_only"`
 	PageSize       int32              `json:"page_size"`
 }
 
@@ -282,6 +295,7 @@ type ListInsideVisitsRow struct {
 	OwnerDecision       string             `json:"owner_decision"`
 	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
 	OwnerDecisionSource string             `json:"owner_decision_source"`
+	Overstay            bool               `json:"overstay"`
 }
 
 // Hot path (guests currently inside): literal status so the partial index applies.
@@ -296,6 +310,7 @@ func (q *Queries) ListInsideVisits(ctx context.Context, arg ListInsideVisitsPara
 		arg.NameLike,
 		arg.PlateLike,
 		arg.Decision,
+		arg.OverstayOnly,
 		arg.PageSize,
 	)
 	if err != nil {
@@ -325,6 +340,7 @@ func (q *Queries) ListInsideVisits(ctx context.Context, arg ListInsideVisitsPara
 			&i.OwnerDecision,
 			&i.OwnerDecidedAt,
 			&i.OwnerDecisionSource,
+			&i.Overstay,
 		); err != nil {
 			return nil, err
 		}
@@ -345,7 +361,9 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       -- Long stay (S7): still inside after the configured number of hours, by the server clock.
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -360,8 +378,10 @@ WHERE ($1::text IS NULL OR v.status = $1)
   AND ($9::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE $9)
   AND ($10::text IS NULL
        OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = $10)
+  AND ($11::bool IS NOT TRUE
+       OR (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours())))
 ORDER BY v.checkin_at DESC, v.id DESC
-LIMIT $11
+LIMIT $12
 `
 
 type ListVisitsParams struct {
@@ -375,6 +395,7 @@ type ListVisitsParams struct {
 	NameLike       pgtype.Text        `json:"name_like"`
 	PlateLike      pgtype.Text        `json:"plate_like"`
 	Decision       pgtype.Text        `json:"decision"`
+	OverstayOnly   pgtype.Bool        `json:"overstay_only"`
 	PageSize       int32              `json:"page_size"`
 }
 
@@ -398,6 +419,7 @@ type ListVisitsRow struct {
 	OwnerDecision       string             `json:"owner_decision"`
 	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
 	OwnerDecisionSource string             `json:"owner_decision_source"`
+	Overstay            bool               `json:"overstay"`
 }
 
 func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListVisitsRow, error) {
@@ -412,6 +434,7 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 		arg.NameLike,
 		arg.PlateLike,
 		arg.Decision,
+		arg.OverstayOnly,
 		arg.PageSize,
 	)
 	if err != nil {
@@ -441,6 +464,7 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 			&i.OwnerDecision,
 			&i.OwnerDecidedAt,
 			&i.OwnerDecisionSource,
+			&i.Overstay,
 		); err != nil {
 			return nil, err
 		}

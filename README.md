@@ -6,8 +6,8 @@ cards. Homeowners see only their own house's visits. Admins manage accounts, hou
 and audit.
 
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
-fast lane), S2 (pre-registration), S4 (owner confirm/reject) and S6 (search). The other Should/Could
-items are not started.
+fast lane), S2 (pre-registration), S4 (owner confirm/reject), S6 (search) and S7 (long-stay flag).
+The other Should/Could items are not started.
 
 ## Tech stack
 
@@ -65,6 +65,14 @@ items are not started.
 - Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
   plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
 
+**Long-stay flag (PRD S7)**
+- Every visit carries `overstay`: true while the guest is still inside after `long_stay_hours` (default
+  12), counted from the server's check-in time. `GET /v1/visits?overstay=true` lists them (guards and
+  admins see all houses, owners only their own).
+- Admins change the limit with `GET/PUT /v1/settings/long-stay` (`{"long_stay_hours": 12}`, 1 to 168).
+  It takes effect immediately and is audited with the old and new value. A missing or corrupt stored
+  value falls back to 12 so visit lists never fail. The flag is computed, not stored.
+
 **Owner confirm/reject (PRD S4)**
 - The owner answers for a guest who is inside: `POST /v1/visits/{id}/decision` with
   `{"decision": "approved"}` or `"rejected"`. Every visit carries `owner_decision`
@@ -108,8 +116,8 @@ items are not started.
 
 ### Not built yet
 
-Should/Could items other than S1, S2, S4 and S6 (for example notifications, offline sync, admin
-2FA). There is no `openapi.yaml` yet.
+Should/Could items other than S1, S2, S4, S6 and S7 (for example notifications, offline sync, report
+export, admin 2FA). There is no `openapi.yaml` yet.
 
 ## Running the project
 

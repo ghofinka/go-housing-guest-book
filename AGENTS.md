@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repo. Product requirements live in
 
 **Housing Guest Book** (Buku Tamu Digital Perumahan): a backend API for a residential cluster's guest log. Guards (satpam) check guests in and out instead of holding their ID cards. Homeowners see only their own house's visits. Admins manage accounts, retention and audit.
 
-Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested, plus the Should-have items S1 (courier/ojol fast lane), S2 (pre-registration), S4 (owner confirm/reject) and S6 (search); the other Should/Could items are not started. Stack and layout below describe the code as built. If you change them, update this file in the same change. Operations guide for retention, erasure and the privacy notice: [docs/RETENTION.md](docs/RETENTION.md).
+Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested, plus the Should-have items S1 (courier/ojol fast lane), S2 (pre-registration), S4 (owner confirm/reject), S6 (search) and S7 (long-stay flag); the other Should/Could items are not started. Stack and layout below describe the code as built. If you change them, update this file in the same change. Operations guide for retention, erasure and the privacy notice: [docs/RETENTION.md](docs/RETENTION.md).
 
 ## Stack
 
@@ -73,6 +73,7 @@ These are the requirements most likely to be broken by a plausible-looking short
 Follow PRD section 7: `visits`, `houses`, `users`, `pre_registrations`, `audit_logs`; plus `refresh_tokens`, `settings` (retention limits, face-photo policy, privacy contact), `retention_runs` and `visit_decisions` (owner confirm/reject, S4). Conventions:
 
 - `pre_registrations` (S2) has `status` (`active|used|cancelled`), `created_by`, `used_at` and `anonymized_at`, and row-level security like `visits` (owners: own house only; no DELETE policy). A code is valid only on `expected_date` (WIB) and works once. Its guest name and plate are personal data: blanked on cancel and by retention.
+- The long-stay flag (S7) is computed, never stored: the SQL function `long_stay_hours()` reads the `long_stay_hours` setting (default 12, valid 1-168, anything else falls back to 12) and every visit query returns `overstay` from it, using the server's `checkin_at`.
 - `visit_decisions` is append-only like `audit_logs` (the app role has `SELECT, INSERT` only): the owner's first answer stands. It is a separate table because owners have no write access to `visits`. A visit made from a pre-registration is derived as `approved` without a row. The decision is advisory and never blocks check-in or check-out.
 
 - UUID primary keys (`uuid`, generated with `gen_random_uuid()`), except where a human-facing code is needed (pre-registration `code`).
