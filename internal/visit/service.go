@@ -29,7 +29,47 @@ var (
 	ErrVisitClosed       = errors.New("visit already checked out")
 	ErrDecisionMade      = errors.New("owner decision already made")
 	ErrBadCursor         = httpx.ErrBadCursor
+
+	// Device-recorded times (PRD S5) are only plausible within a window around the server's clock.
+	ErrClientTimeFuture = errors.New("client captured time is in the future")
+	ErrClientTimeOld    = errors.New("client captured time is too old")
 )
+
+// Offline sync window (PRD S5): a device may record an event up to MaxOfflineAge ago (a guard post
+// can be offline over a weekend) and its clock may run ClockSkew ahead of the server's.
+const (
+	MaxOfflineAge = 72 * time.Hour
+	ClockSkew     = 5 * time.Minute
+)
+
+// checkClientTime validates a device-recorded time against the server clock.
+func checkClientTime(t *time.Time, now time.Time) error {
+	switch {
+	case t == nil:
+		return nil
+	case t.After(now.Add(ClockSkew)):
+		return ErrClientTimeFuture
+	case t.Before(now.Add(-MaxOfflineAge)):
+		return ErrClientTimeOld
+	}
+	return nil
+}
+
+// clientTime renders a stored device time in WIB, or nil when there is none.
+func clientTime(t pgtype.Timestamptz) *time.Time {
+	if !t.Valid {
+		return nil
+	}
+	w := t.Time.In(httpx.WIB)
+	return &w
+}
+
+func timestamptzOrNullPtr(t *time.Time) pgtype.Timestamptz {
+	if t == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: t.UTC(), Valid: true}
+}
 
 // Photo kinds, as used in the URL and in audit targets.
 const (
@@ -79,6 +119,11 @@ type Visit struct {
 	// Overstay is true while the guest is still inside after the configured limit (PRD S7, setting
 	// long_stay_hours, default 12), counted from the server's check-in time.
 	Overstay bool `json:"overstay"`
+	// ClientCapturedAt and ClientCheckoutCapturedAt are the times the guard's device recorded the
+	// check-in and check-out when it was offline (PRD S5). They sit beside checkin_at and checkout_at,
+	// which stay the server's receive times; null when the request was made online.
+	ClientCapturedAt         *time.Time `json:"client_captured_at"`
+	ClientCheckoutCapturedAt *time.Time `json:"client_checkout_captured_at"`
 }
 
 // Owner decision statuses, as stored in visit_decisions plus the default before an answer.
@@ -167,6 +212,9 @@ type CheckInInput struct {
 	// PreRegistrationCode is a normalized pre-registration code (PRD S2), "" for none. When set,
 	// the house, name and plate default from the pre-registration.
 	PreRegistrationCode string
+	// ClientCapturedAt is when the device recorded the check-in while offline (PRD S5), nil online.
+	// It is stored beside the server's check-in time, never instead of it.
+	ClientCapturedAt *time.Time
 	// Photos are already validated and compressed (photo.Process). nil means none.
 	VehiclePhoto []byte
 	FacePhoto    []byte
@@ -245,6 +293,12 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			return err
 		}
 
+		// Checked after the replay on purpose: a retry of a check-in that already synced must
+		// still answer 200 even if the device clock or the 72-hour window has moved on since.
+		if err := checkClientTime(in.ClientCapturedAt, time.Now()); err != nil {
+			return err
+		}
+
 		var preRegID pgtype.UUID
 		if in.PreRegistrationCode != "" {
 			var err error
@@ -312,6 +366,7 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			VehiclePhotoPath:  textOrNull(vehicleKey),
 			FacePhotoPath:     textOrNull(faceKey),
 			PreRegistrationID: preRegID,
+			ClientCapturedAt:  timestamptzOrNullPtr(in.ClientCapturedAt),
 		})
 		if errors.Is(err, pgx.ErrNoRows) { // lost a race with the same client_request_id
 			v, ok, err := replay(ctx, q, in.ClientRequestID)
@@ -350,31 +405,80 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 
 // CheckOut marks a guest as exited. It is idempotent: an already-exited visit is
 // returned unchanged, keeping its original exit time.
-func (s *Service) CheckOut(ctx context.Context, p auth.Principal, id uuid.UUID) (Visit, error) {
+//
+// clientCapturedAt is the time the guard's device recorded the exit while offline (PRD S5), nil
+// online. It is validated and stored only when this call is the one that checks the guest out.
+func (s *Service) CheckOut(ctx context.Context, p auth.Principal, id uuid.UUID, clientCapturedAt *time.Time) (Visit, error) {
 	var out Visit
 	err := db.InTx(ctx, s.pool, p.Role, p.HouseID, func(q *db.Queries) error {
-		_, err := q.CheckoutVisit(ctx, db.CheckoutVisitParams{ID: id, CheckoutBy: pgtype.UUID{Bytes: p.UserID, Valid: true}})
-		changed := err == nil
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return fmt.Errorf("checkout: %w", err)
-		}
-		row, err := q.GetVisit(ctx, id)
-		if errors.Is(err, pgx.ErrNoRows) {
-			return ErrNotFound
-		}
-		if err != nil {
-			return fmt.Errorf("reload visit: %w", err)
-		}
-		out = toVisit(row)
-		if changed {
-			return audit(ctx, q, p.UserID, "visit_checked_out", id)
-		}
-		return nil
+		var err error
+		out, err = checkOut(ctx, q, p, id, clientCapturedAt)
+		return err
 	})
 	if err != nil {
 		return Visit{}, wrap(err, "check out")
 	}
 	return out, nil
+}
+
+// CheckOutByRequest is CheckOut for a client that only knows the client_request_id it used at
+// check-in, which is all an offline device has for a guest it registered without a connection.
+// An unknown key is ErrNotFound: the check-in has to be replayed first.
+func (s *Service) CheckOutByRequest(ctx context.Context, p auth.Principal, requestID uuid.UUID, clientCapturedAt *time.Time) (Visit, error) {
+	var out Visit
+	err := db.InTx(ctx, s.pool, p.Role, p.HouseID, func(q *db.Queries) error {
+		r, err := q.GetVisitByClientRequestID(ctx, pgtype.UUID{Bytes: requestID, Valid: true})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return fmt.Errorf("lookup client request: %w", err)
+		}
+		out, err = checkOut(ctx, q, p, r.ID, clientCapturedAt)
+		return err
+	})
+	if err != nil {
+		return Visit{}, wrap(err, "check out by request")
+	}
+	return out, nil
+}
+
+// checkOut does the work of a check-out inside the caller's transaction. Only the first call changes
+// the row and is audited; a repeat returns the visit as it was, whatever device time it carries.
+func checkOut(ctx context.Context, q *db.Queries, p auth.Principal, id uuid.UUID, clientCapturedAt *time.Time) (Visit, error) {
+	cur, err := q.GetVisit(ctx, id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Visit{}, ErrNotFound
+	}
+	if err != nil {
+		return Visit{}, fmt.Errorf("get visit: %w", err)
+	}
+	if cur.Status == StatusExited {
+		return toVisit(cur), nil
+	}
+	if err := checkClientTime(clientCapturedAt, time.Now()); err != nil {
+		return Visit{}, err
+	}
+
+	_, err = q.CheckoutVisit(ctx, db.CheckoutVisitParams{
+		ID:                       id,
+		CheckoutBy:               pgtype.UUID{Bytes: p.UserID, Valid: true},
+		ClientCheckoutCapturedAt: timestamptzOrNullPtr(clientCapturedAt),
+	})
+	changed := err == nil
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) { // ErrNoRows: another request exited it first
+		return Visit{}, fmt.Errorf("checkout: %w", err)
+	}
+	reloaded, err := q.GetVisit(ctx, id)
+	if err != nil {
+		return Visit{}, fmt.Errorf("reload visit: %w", err)
+	}
+	if changed {
+		if err := audit(ctx, q, p.UserID, "visit_checked_out", id); err != nil {
+			return Visit{}, err
+		}
+	}
+	return toVisit(reloaded), nil
 }
 
 func (s *Service) Get(ctx context.Context, p auth.Principal, id uuid.UUID) (Visit, error) {
@@ -588,7 +692,7 @@ func wrap(err error, op string) error {
 	for _, known := range []error{
 		ErrNotFound, ErrPhotoNotFound, ErrHouseInvalid, ErrFacePhotoRequired, ErrVehiclePhotoRequired,
 		ErrPreRegNotFound, ErrPreRegUsed, ErrPreRegCancelled, ErrPreRegWrongDate, ErrPreRegHouseMismatch,
-		ErrVisitClosed, ErrDecisionMade,
+		ErrVisitClosed, ErrDecisionMade, ErrClientTimeFuture, ErrClientTimeOld,
 	} {
 		if errors.Is(err, known) {
 			return err
@@ -599,18 +703,20 @@ func wrap(err error, op string) error {
 
 func toVisit(r row) Visit {
 	v := Visit{
-		ID:            r.ID,
-		House:         HouseRef{ID: r.HouseID, Block: r.Block, Number: r.Number},
-		GuestName:     textPtr(r.GuestName),
-		Category:      r.Category,
-		PurposeNote:   textPtr(r.PurposeNote),
-		VehiclePlate:  textPtr(r.VehiclePlate),
-		CheckinAt:     r.CheckinAt.In(httpx.WIB),
-		CheckinBy:     &r.CheckinBy,
-		Status:        r.Status,
-		Anonymized:    r.Anonymized,
-		Overstay:      r.Overstay,
-		OwnerDecision: OwnerDecision{Status: r.OwnerDecision},
+		ID:                       r.ID,
+		House:                    HouseRef{ID: r.HouseID, Block: r.Block, Number: r.Number},
+		GuestName:                textPtr(r.GuestName),
+		Category:                 r.Category,
+		PurposeNote:              textPtr(r.PurposeNote),
+		VehiclePlate:             textPtr(r.VehiclePlate),
+		CheckinAt:                r.CheckinAt.In(httpx.WIB),
+		CheckinBy:                &r.CheckinBy,
+		Status:                   r.Status,
+		Anonymized:               r.Anonymized,
+		Overstay:                 r.Overstay,
+		ClientCapturedAt:         clientTime(r.ClientCapturedAt),
+		ClientCheckoutCapturedAt: clientTime(r.ClientCheckoutCapturedAt),
+		OwnerDecision:            OwnerDecision{Status: r.OwnerDecision},
 	}
 	if r.OwnerDecisionSource != "" {
 		src := r.OwnerDecisionSource

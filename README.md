@@ -6,8 +6,8 @@ cards. Homeowners see only their own house's visits. Admins manage accounts, hou
 and audit.
 
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
-fast lane), S2 (pre-registration), S4 (owner confirm/reject), S6 (search) and S7 (long-stay flag).
-The other Should/Could items are not started.
+fast lane), S2 (pre-registration), S4 (owner confirm/reject), S5 (offline sync), S6 (search) and S7
+(long-stay flag). The other Should/Could items are not started.
 
 ## Tech stack
 
@@ -65,6 +65,27 @@ The other Should/Could items are not started.
 - Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
   plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
 
+**Offline sync (PRD S5)**
+- The guard post can lose signal, so the client queues the same requests it would send online and
+  replays them **oldest first** when it is back. There is no batch endpoint; each request is safe to
+  retry because it carries a `client_request_id` (a UUID the client makes up for each check-in).
+- Check-in accepts `client_captured_at` (RFC 3339, JSON or multipart): when the device recorded it.
+  Photos stay on the normal multipart check-in. A replay answers **201** the first time and **200**
+  with the original visit afterwards, so a client can treat 200 as "already synced".
+- The server clock stays authoritative: `checkin_at` and `checkout_at` are always the time the server
+  received the request, and every filter, sort, retention and long-stay rule uses them. The device time
+  is stored beside them and returned as `client_captured_at` and `client_checkout_captured_at`
+  (null when the request was made online).
+- Plausibility: the device time may be at most 5 minutes ahead of the server and at most 72 hours old,
+  otherwise 422 on `client_captured_at` (an older event has to be written in the paper log).
+- Check-out works offline too. `POST /v1/visits/by-request/{client_request_id}/checkout` finds the
+  visit by the key used at check-in, so the device does not need the server's visit id; replay the
+  check-in first (an unknown key is 404). Both check-out routes take an optional body
+  `{"client_captured_at": "..."}`. Only the first check-out is stored and audited; a repeat returns the
+  visit as it was.
+- Known limitation: a replay with the same `client_request_id` but different data returns the first
+  visit unchanged, so a client must never reuse a key for a different guest.
+
 **Long-stay flag (PRD S7)**
 - Every visit carries `overstay`: true while the guest is still inside after `long_stay_hours` (default
   12), counted from the server's check-in time. `GET /v1/visits?overstay=true` lists them (guards and
@@ -116,8 +137,8 @@ The other Should/Could items are not started.
 
 ### Not built yet
 
-Should/Could items other than S1, S2, S4, S6 and S7 (for example notifications, offline sync, report
-export, admin 2FA). There is no `openapi.yaml` yet.
+Should/Could items other than S1, S2, S4, S5, S6 and S7 (for example notifications, report export,
+admin 2FA). There is no `openapi.yaml` yet.
 
 ## Running the project
 

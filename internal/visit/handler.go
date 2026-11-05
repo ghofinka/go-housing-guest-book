@@ -1,7 +1,10 @@
 package visit
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"mime"
 	"mime/multipart"
@@ -53,6 +56,7 @@ func (h *Handler) Register(mux *http.ServeMux) {
 	reader := func(f http.HandlerFunc) http.Handler { return h.authn.Require(f, "guard", "admin", "owner") }
 	mux.Handle("POST /v1/visits", guard(h.checkIn))
 	mux.Handle("POST /v1/visits/{id}/checkout", guard(h.checkOut))
+	mux.Handle("POST /v1/visits/by-request/{client_request_id}/checkout", guard(h.checkOutByRequest))
 	mux.Handle("POST /v1/visits/{id}/decision", h.authn.Require(http.HandlerFunc(h.decide), auth.RoleOwner))
 	mux.Handle("DELETE /v1/visits/{id}/personal-data", h.authn.Require(http.HandlerFunc(h.erase), auth.RoleAdmin))
 	mux.Handle("GET /v1/visits", reader(h.list))
@@ -69,6 +73,9 @@ type checkInRequest struct {
 	VehiclePlate    *string    `json:"vehicle_plate"`
 	// PreRegistrationCode (PRD S2): house, name and plate default from the pre-registration.
 	PreRegistrationCode *string `json:"pre_registration_code"`
+	// ClientCapturedAt (PRD S5): when the device recorded the check-in while offline, RFC 3339.
+	// It is stored beside the server's check-in time, which stays authoritative.
+	ClientCapturedAt *time.Time `json:"client_captured_at"`
 }
 
 // checkIn accepts JSON (no photos) or multipart/form-data. The multipart form has
@@ -90,11 +97,12 @@ func (h *Handler) checkIn(w http.ResponseWriter, r *http.Request) {
 	}
 
 	in := CheckInInput{
-		ClientRequestID: req.ClientRequestID,
-		Category:        req.Category,
-		GuestName:       blankToNil(req.GuestName),
-		PurposeNote:     blankToNil(req.PurposeNote),
-		VehiclePlate:    blankToNil(req.VehiclePlate),
+		ClientRequestID:  req.ClientRequestID,
+		Category:         req.Category,
+		GuestName:        blankToNil(req.GuestName),
+		PurposeNote:      blankToNil(req.PurposeNote),
+		VehiclePlate:     blankToNil(req.VehiclePlate),
+		ClientCapturedAt: req.ClientCapturedAt,
 	}
 	// With a pre-registration code the pre-registration supplies the house and name, and the
 	// category defaults to a plain guest.
@@ -172,13 +180,62 @@ func (h *Handler) checkOut(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	clientAt, ok := readCheckOutBody(w, r)
+	if !ok {
+		return
+	}
 	p, _ := auth.PrincipalFrom(r.Context())
-	v, err := h.svc.CheckOut(r.Context(), p, id)
+	v, err := h.svc.CheckOut(r.Context(), p, id, clientAt)
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	httpx.JSON(w, http.StatusOK, v)
+}
+
+// checkOutByRequest is check-out for a guest identified by the client_request_id used at check-in,
+// so a device that was offline can queue the exit without knowing the server's visit id (PRD S5).
+// An unknown key is 404: replay the check-in first.
+func (h *Handler) checkOutByRequest(w http.ResponseWriter, r *http.Request) {
+	requestID, err := uuid.Parse(r.PathValue("client_request_id"))
+	if err != nil {
+		httpx.Error(w, http.StatusNotFound, "visit_not_found", "Data kunjungan tidak ditemukan.")
+		return
+	}
+	clientAt, ok := readCheckOutBody(w, r)
+	if !ok {
+		return
+	}
+	p, _ := auth.PrincipalFrom(r.Context())
+	v, err := h.svc.CheckOutByRequest(r.Context(), p, requestID, clientAt)
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	httpx.JSON(w, http.StatusOK, v)
+}
+
+// readCheckOutBody reads the optional check-out body {"client_captured_at": "<RFC 3339>"}. A request
+// with no body at all is the normal online check-out. It returns false when it already answered.
+func readCheckOutBody(w http.ResponseWriter, r *http.Request) (*time.Time, bool) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 4<<10))
+	if err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_json", "Format data tidak valid.")
+		return nil, false
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, true
+	}
+	var req struct {
+		ClientCapturedAt *time.Time `json:"client_captured_at"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		httpx.Error(w, http.StatusBadRequest, "invalid_json", "Format data tidak valid.")
+		return nil, false
+	}
+	return req.ClientCapturedAt, true
 }
 
 // erase handles a data-subject deletion request: photos and personal fields are
@@ -344,6 +401,10 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrClientTimeFuture):
+		httpx.ValidationError(w, map[string]string{"client_captured_at": "Waktu perangkat tidak boleh di masa depan. Periksa jam perangkat."})
+	case errors.Is(err, ErrClientTimeOld):
+		httpx.ValidationError(w, map[string]string{"client_captured_at": "Waktu perangkat terlalu lama (maksimal 72 jam). Catat manual di buku tamu."})
 	case errors.Is(err, ErrVisitClosed):
 		httpx.Error(w, http.StatusConflict, "visit_closed", "Tamu sudah keluar, jadi keputusan tidak bisa dikirim lagi.")
 	case errors.Is(err, ErrDecisionMade):
@@ -421,6 +482,14 @@ func readCheckInForm(w http.ResponseWriter, r *http.Request, req *checkInRequest
 	req.ClientRequestID = parseUUID("client_request_id")
 	req.GuestName, req.PurposeNote, req.VehiclePlate = val("guest_name"), val("purpose_note"), val("vehicle_plate")
 	req.PreRegistrationCode = val("pre_registration_code")
+	if s := blankToNil(val("client_captured_at")); s != nil {
+		t, err := time.Parse(time.RFC3339, *s)
+		if err != nil {
+			fields["client_captured_at"] = "Waktu perangkat harus berformat RFC 3339, contoh 2026-11-05T09:30:00+07:00."
+		} else {
+			req.ClientCapturedAt = &t
+		}
+	}
 	if c := val("category"); c != nil {
 		req.Category = *c
 	}

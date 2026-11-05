@@ -15,19 +15,21 @@ import (
 
 const checkoutVisit = `-- name: CheckoutVisit :one
 UPDATE visits
-SET status = 'exited', checkout_at = now(), checkout_by = $2
+SET status = 'exited', checkout_at = now(), checkout_by = $2, client_checkout_captured_at = $3
 WHERE id = $1 AND status = 'inside'
 RETURNING id
 `
 
 type CheckoutVisitParams struct {
-	ID         uuid.UUID   `json:"id"`
-	CheckoutBy pgtype.UUID `json:"checkout_by"`
+	ID                       uuid.UUID          `json:"id"`
+	CheckoutBy               pgtype.UUID        `json:"checkout_by"`
+	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
 }
 
-// Only an 'inside' visit changes; the server clock sets checkout_at.
+// Only an 'inside' visit changes; the server clock sets checkout_at. The device time, if any,
+// is stored beside it (S5) and, like checkout_at, only the first check-out writes it.
 func (q *Queries) CheckoutVisit(ctx context.Context, arg CheckoutVisitParams) (uuid.UUID, error) {
-	row := q.db.QueryRow(ctx, checkoutVisit, arg.ID, arg.CheckoutBy)
+	row := q.db.QueryRow(ctx, checkoutVisit, arg.ID, arg.CheckoutBy, arg.ClientCheckoutCapturedAt)
 	var id uuid.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -35,23 +37,24 @@ func (q *Queries) CheckoutVisit(ctx context.Context, arg CheckoutVisitParams) (u
 
 const createVisit = `-- name: CreateVisit :one
 INSERT INTO visits (client_request_id, house_id, guest_name, category, purpose_note, vehicle_plate, checkin_by,
-                    vehicle_photo_path, face_photo_path, pre_registration_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    vehicle_photo_path, face_photo_path, pre_registration_id, client_captured_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (client_request_id) DO NOTHING
 RETURNING id
 `
 
 type CreateVisitParams struct {
-	ClientRequestID   pgtype.UUID `json:"client_request_id"`
-	HouseID           uuid.UUID   `json:"house_id"`
-	GuestName         pgtype.Text `json:"guest_name"`
-	Category          string      `json:"category"`
-	PurposeNote       pgtype.Text `json:"purpose_note"`
-	VehiclePlate      pgtype.Text `json:"vehicle_plate"`
-	CheckinBy         uuid.UUID   `json:"checkin_by"`
-	VehiclePhotoPath  pgtype.Text `json:"vehicle_photo_path"`
-	FacePhotoPath     pgtype.Text `json:"face_photo_path"`
-	PreRegistrationID pgtype.UUID `json:"pre_registration_id"`
+	ClientRequestID   pgtype.UUID        `json:"client_request_id"`
+	HouseID           uuid.UUID          `json:"house_id"`
+	GuestName         pgtype.Text        `json:"guest_name"`
+	Category          string             `json:"category"`
+	PurposeNote       pgtype.Text        `json:"purpose_note"`
+	VehiclePlate      pgtype.Text        `json:"vehicle_plate"`
+	CheckinBy         uuid.UUID          `json:"checkin_by"`
+	VehiclePhotoPath  pgtype.Text        `json:"vehicle_photo_path"`
+	FacePhotoPath     pgtype.Text        `json:"face_photo_path"`
+	PreRegistrationID pgtype.UUID        `json:"pre_registration_id"`
+	ClientCapturedAt  pgtype.Timestamptz `json:"client_captured_at"`
 }
 
 // Returns no row when client_request_id already exists (idempotent retry).
@@ -67,6 +70,7 @@ func (q *Queries) CreateVisit(ctx context.Context, arg CreateVisitParams) (uuid.
 		arg.VehiclePhotoPath,
 		arg.FacePhotoPath,
 		arg.PreRegistrationID,
+		arg.ClientCapturedAt,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -84,7 +88,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -92,26 +97,28 @@ WHERE v.id = $1
 `
 
 type GetVisitRow struct {
-	ID                  uuid.UUID          `json:"id"`
-	HouseID             uuid.UUID          `json:"house_id"`
-	Block               string             `json:"block"`
-	Number              string             `json:"number"`
-	GuestName           pgtype.Text        `json:"guest_name"`
-	Category            string             `json:"category"`
-	PurposeNote         pgtype.Text        `json:"purpose_note"`
-	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt           time.Time          `json:"checkin_at"`
-	CheckinBy           uuid.UUID          `json:"checkin_by"`
-	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
-	Status              string             `json:"status"`
-	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
-	HasFacePhoto        bool               `json:"has_face_photo"`
-	Anonymized          bool               `json:"anonymized"`
-	OwnerDecision       string             `json:"owner_decision"`
-	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
-	OwnerDecisionSource string             `json:"owner_decision_source"`
-	Overstay            bool               `json:"overstay"`
+	ID                       uuid.UUID          `json:"id"`
+	HouseID                  uuid.UUID          `json:"house_id"`
+	Block                    string             `json:"block"`
+	Number                   string             `json:"number"`
+	GuestName                pgtype.Text        `json:"guest_name"`
+	Category                 string             `json:"category"`
+	PurposeNote              pgtype.Text        `json:"purpose_note"`
+	VehiclePlate             pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt                time.Time          `json:"checkin_at"`
+	CheckinBy                uuid.UUID          `json:"checkin_by"`
+	CheckoutAt               pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy               pgtype.UUID        `json:"checkout_by"`
+	Status                   string             `json:"status"`
+	HasVehiclePhoto          bool               `json:"has_vehicle_photo"`
+	HasFacePhoto             bool               `json:"has_face_photo"`
+	Anonymized               bool               `json:"anonymized"`
+	OwnerDecision            string             `json:"owner_decision"`
+	OwnerDecidedAt           pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource      string             `json:"owner_decision_source"`
+	Overstay                 bool               `json:"overstay"`
+	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
+	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
 }
 
 func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, error) {
@@ -138,6 +145,8 @@ func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, erro
 		&i.OwnerDecidedAt,
 		&i.OwnerDecisionSource,
 		&i.Overstay,
+		&i.ClientCapturedAt,
+		&i.ClientCheckoutCapturedAt,
 	)
 	return i, err
 }
@@ -153,7 +162,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -161,26 +171,28 @@ WHERE v.client_request_id = $1
 `
 
 type GetVisitByClientRequestIDRow struct {
-	ID                  uuid.UUID          `json:"id"`
-	HouseID             uuid.UUID          `json:"house_id"`
-	Block               string             `json:"block"`
-	Number              string             `json:"number"`
-	GuestName           pgtype.Text        `json:"guest_name"`
-	Category            string             `json:"category"`
-	PurposeNote         pgtype.Text        `json:"purpose_note"`
-	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt           time.Time          `json:"checkin_at"`
-	CheckinBy           uuid.UUID          `json:"checkin_by"`
-	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
-	Status              string             `json:"status"`
-	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
-	HasFacePhoto        bool               `json:"has_face_photo"`
-	Anonymized          bool               `json:"anonymized"`
-	OwnerDecision       string             `json:"owner_decision"`
-	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
-	OwnerDecisionSource string             `json:"owner_decision_source"`
-	Overstay            bool               `json:"overstay"`
+	ID                       uuid.UUID          `json:"id"`
+	HouseID                  uuid.UUID          `json:"house_id"`
+	Block                    string             `json:"block"`
+	Number                   string             `json:"number"`
+	GuestName                pgtype.Text        `json:"guest_name"`
+	Category                 string             `json:"category"`
+	PurposeNote              pgtype.Text        `json:"purpose_note"`
+	VehiclePlate             pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt                time.Time          `json:"checkin_at"`
+	CheckinBy                uuid.UUID          `json:"checkin_by"`
+	CheckoutAt               pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy               pgtype.UUID        `json:"checkout_by"`
+	Status                   string             `json:"status"`
+	HasVehiclePhoto          bool               `json:"has_vehicle_photo"`
+	HasFacePhoto             bool               `json:"has_face_photo"`
+	Anonymized               bool               `json:"anonymized"`
+	OwnerDecision            string             `json:"owner_decision"`
+	OwnerDecidedAt           pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource      string             `json:"owner_decision_source"`
+	Overstay                 bool               `json:"overstay"`
+	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
+	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
 }
 
 func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID pgtype.UUID) (GetVisitByClientRequestIDRow, error) {
@@ -207,6 +219,8 @@ func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID
 		&i.OwnerDecidedAt,
 		&i.OwnerDecisionSource,
 		&i.Overstay,
+		&i.ClientCapturedAt,
+		&i.ClientCheckoutCapturedAt,
 	)
 	return i, err
 }
@@ -240,7 +254,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -276,26 +291,28 @@ type ListInsideVisitsParams struct {
 }
 
 type ListInsideVisitsRow struct {
-	ID                  uuid.UUID          `json:"id"`
-	HouseID             uuid.UUID          `json:"house_id"`
-	Block               string             `json:"block"`
-	Number              string             `json:"number"`
-	GuestName           pgtype.Text        `json:"guest_name"`
-	Category            string             `json:"category"`
-	PurposeNote         pgtype.Text        `json:"purpose_note"`
-	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt           time.Time          `json:"checkin_at"`
-	CheckinBy           uuid.UUID          `json:"checkin_by"`
-	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
-	Status              string             `json:"status"`
-	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
-	HasFacePhoto        bool               `json:"has_face_photo"`
-	Anonymized          bool               `json:"anonymized"`
-	OwnerDecision       string             `json:"owner_decision"`
-	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
-	OwnerDecisionSource string             `json:"owner_decision_source"`
-	Overstay            bool               `json:"overstay"`
+	ID                       uuid.UUID          `json:"id"`
+	HouseID                  uuid.UUID          `json:"house_id"`
+	Block                    string             `json:"block"`
+	Number                   string             `json:"number"`
+	GuestName                pgtype.Text        `json:"guest_name"`
+	Category                 string             `json:"category"`
+	PurposeNote              pgtype.Text        `json:"purpose_note"`
+	VehiclePlate             pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt                time.Time          `json:"checkin_at"`
+	CheckinBy                uuid.UUID          `json:"checkin_by"`
+	CheckoutAt               pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy               pgtype.UUID        `json:"checkout_by"`
+	Status                   string             `json:"status"`
+	HasVehiclePhoto          bool               `json:"has_vehicle_photo"`
+	HasFacePhoto             bool               `json:"has_face_photo"`
+	Anonymized               bool               `json:"anonymized"`
+	OwnerDecision            string             `json:"owner_decision"`
+	OwnerDecidedAt           pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource      string             `json:"owner_decision_source"`
+	Overstay                 bool               `json:"overstay"`
+	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
+	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
 }
 
 // Hot path (guests currently inside): literal status so the partial index applies.
@@ -341,6 +358,8 @@ func (q *Queries) ListInsideVisits(ctx context.Context, arg ListInsideVisitsPara
 			&i.OwnerDecidedAt,
 			&i.OwnerDecisionSource,
 			&i.Overstay,
+			&i.ClientCapturedAt,
+			&i.ClientCheckoutCapturedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -363,7 +382,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -400,26 +420,28 @@ type ListVisitsParams struct {
 }
 
 type ListVisitsRow struct {
-	ID                  uuid.UUID          `json:"id"`
-	HouseID             uuid.UUID          `json:"house_id"`
-	Block               string             `json:"block"`
-	Number              string             `json:"number"`
-	GuestName           pgtype.Text        `json:"guest_name"`
-	Category            string             `json:"category"`
-	PurposeNote         pgtype.Text        `json:"purpose_note"`
-	VehiclePlate        pgtype.Text        `json:"vehicle_plate"`
-	CheckinAt           time.Time          `json:"checkin_at"`
-	CheckinBy           uuid.UUID          `json:"checkin_by"`
-	CheckoutAt          pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy          pgtype.UUID        `json:"checkout_by"`
-	Status              string             `json:"status"`
-	HasVehiclePhoto     bool               `json:"has_vehicle_photo"`
-	HasFacePhoto        bool               `json:"has_face_photo"`
-	Anonymized          bool               `json:"anonymized"`
-	OwnerDecision       string             `json:"owner_decision"`
-	OwnerDecidedAt      pgtype.Timestamptz `json:"owner_decided_at"`
-	OwnerDecisionSource string             `json:"owner_decision_source"`
-	Overstay            bool               `json:"overstay"`
+	ID                       uuid.UUID          `json:"id"`
+	HouseID                  uuid.UUID          `json:"house_id"`
+	Block                    string             `json:"block"`
+	Number                   string             `json:"number"`
+	GuestName                pgtype.Text        `json:"guest_name"`
+	Category                 string             `json:"category"`
+	PurposeNote              pgtype.Text        `json:"purpose_note"`
+	VehiclePlate             pgtype.Text        `json:"vehicle_plate"`
+	CheckinAt                time.Time          `json:"checkin_at"`
+	CheckinBy                uuid.UUID          `json:"checkin_by"`
+	CheckoutAt               pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy               pgtype.UUID        `json:"checkout_by"`
+	Status                   string             `json:"status"`
+	HasVehiclePhoto          bool               `json:"has_vehicle_photo"`
+	HasFacePhoto             bool               `json:"has_face_photo"`
+	Anonymized               bool               `json:"anonymized"`
+	OwnerDecision            string             `json:"owner_decision"`
+	OwnerDecidedAt           pgtype.Timestamptz `json:"owner_decided_at"`
+	OwnerDecisionSource      string             `json:"owner_decision_source"`
+	Overstay                 bool               `json:"overstay"`
+	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
+	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
 }
 
 func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListVisitsRow, error) {
@@ -465,6 +487,8 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 			&i.OwnerDecidedAt,
 			&i.OwnerDecisionSource,
 			&i.Overstay,
+			&i.ClientCapturedAt,
+			&i.ClientCheckoutCapturedAt,
 		); err != nil {
 			return nil, err
 		}

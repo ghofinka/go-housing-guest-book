@@ -86,22 +86,24 @@ type User struct {
 }
 
 type Visit struct {
-	ID                uuid.UUID          `json:"id"`
-	ClientRequestID   pgtype.UUID        `json:"client_request_id"`
-	HouseID           uuid.UUID          `json:"house_id"`
-	GuestName         pgtype.Text        `json:"guest_name"`
-	Category          string             `json:"category"`
-	PurposeNote       pgtype.Text        `json:"purpose_note"`
-	VehiclePlate      pgtype.Text        `json:"vehicle_plate"`
-	VehiclePhotoPath  pgtype.Text        `json:"vehicle_photo_path"`
-	FacePhotoPath     pgtype.Text        `json:"face_photo_path"`
-	CheckinAt         time.Time          `json:"checkin_at"`
-	CheckinBy         uuid.UUID          `json:"checkin_by"`
-	CheckoutAt        pgtype.Timestamptz `json:"checkout_at"`
-	CheckoutBy        pgtype.UUID        `json:"checkout_by"`
-	Status            string             `json:"status"`
-	PreRegistrationID pgtype.UUID        `json:"pre_registration_id"`
-	AnonymizedAt      pgtype.Timestamptz `json:"anonymized_at"`
+	ID                       uuid.UUID          `json:"id"`
+	ClientRequestID          pgtype.UUID        `json:"client_request_id"`
+	HouseID                  uuid.UUID          `json:"house_id"`
+	GuestName                pgtype.Text        `json:"guest_name"`
+	Category                 string             `json:"category"`
+	PurposeNote              pgtype.Text        `json:"purpose_note"`
+	VehiclePlate             pgtype.Text        `json:"vehicle_plate"`
+	VehiclePhotoPath         pgtype.Text        `json:"vehicle_photo_path"`
+	FacePhotoPath            pgtype.Text        `json:"face_photo_path"`
+	CheckinAt                time.Time          `json:"checkin_at"`
+	CheckinBy                uuid.UUID          `json:"checkin_by"`
+	CheckoutAt               pgtype.Timestamptz `json:"checkout_at"`
+	CheckoutBy               pgtype.UUID        `json:"checkout_by"`
+	Status                   string             `json:"status"`
+	PreRegistrationID        pgtype.UUID        `json:"pre_registration_id"`
+	AnonymizedAt             pgtype.Timestamptz `json:"anonymized_at"`
+	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
+	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
 }
 
 type VisitDecision struct {

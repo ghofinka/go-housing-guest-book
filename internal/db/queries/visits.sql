@@ -1,8 +1,8 @@
 -- name: CreateVisit :one
 -- Returns no row when client_request_id already exists (idempotent retry).
 INSERT INTO visits (client_request_id, house_id, guest_name, category, purpose_note, vehicle_plate, checkin_by,
-                    vehicle_photo_path, face_photo_path, pre_registration_id)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                    vehicle_photo_path, face_photo_path, pre_registration_id, client_captured_at)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
 ON CONFLICT (client_request_id) DO NOTHING
 RETURNING id;
 
@@ -17,7 +17,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -34,16 +35,18 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
 WHERE v.client_request_id = $1;
 
 -- name: CheckoutVisit :one
--- Only an 'inside' visit changes; the server clock sets checkout_at.
+-- Only an 'inside' visit changes; the server clock sets checkout_at. The device time, if any,
+-- is stored beside it (S5) and, like checkout_at, only the first check-out writes it.
 UPDATE visits
-SET status = 'exited', checkout_at = now(), checkout_by = $2
+SET status = 'exited', checkout_at = now(), checkout_by = $2, client_checkout_captured_at = $3
 WHERE id = $1 AND status = 'inside'
 RETURNING id;
 
@@ -59,7 +62,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -90,7 +94,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        -- Empty while pending (never NULL, so it scans into a plain string).
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
-       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay
+       (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
+       v.client_captured_at, v.client_checkout_captured_at
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
