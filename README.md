@@ -7,7 +7,8 @@ and audit.
 
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
 fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5
-(offline sync), S6 (search) and S7 (long-stay flag). The other Should/Could items are not started.
+(offline sync), S6 (search), S7 (long-stay flag) and S8 (report export). The Could-have items are not
+started.
 
 ## Tech stack
 
@@ -64,6 +65,27 @@ fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner con
   pre-registration, and the category defaults to `tamu`. A plate still needs its vehicle photo.
 - Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
   plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
+
+**Report export (PRD S8)**
+- Admins download the visit log for a period: `GET /v1/reports/visits.csv` and `GET /v1/reports/visits.pdf`.
+  `from` and `to` are required (`YYYY-MM-DD`, WIB, both days included, at most **93 days**). Optional
+  filters: `house_id`, `category`, `status`. Newest visits come first.
+- Columns: time in and out (WIB), minutes inside, house, category, status, the owner's answer and the
+  long-stay flag. **Guest name, plate and note are left out** unless you pass `include_personal=true`, and
+  photos and guard names are never included. A record that retention has anonymized has blank personal cells.
+- CSV is UTF-8 with a byte-order mark, so Excel opens it correctly, and it is streamed page by page, so a large
+  period does not load into memory. Any text cell that starts with `=`, `+`, `-` or `@` (or a tab or carriage
+  return) gets a leading apostrophe, so a guest named `=HYPERLINK(...)` cannot run a formula in the admin's
+  spreadsheet.
+- PDF is A4 landscape with a title, the period, a summary (total, per category, still inside, over the
+  long-stay limit) and a table whose header repeats on every page. It is built in memory, so it is limited to
+  **5000 rows**; a larger period gets a 422 that suggests the CSV. It uses the standard PDF fonts, so characters
+  outside Latin-1 (for example Japanese) show as `?`; the CSV keeps them.
+- Every export is recorded in the audit log **before** any data is sent (`visits_exported`: format, period,
+  filters, whether personal data was included, and the row count, never a name or plate), so a download that
+  stops halfway is still on record. A file that has been downloaded is outside the system: handle exports that
+  include personal data with care.
+- Browsers on the configured frontend origin can read the file name (`Content-Disposition` is exposed by CORS).
 
 **Owner notifications by email (PRD S3)**
 - When a guest is recorded, every active owner of that house is emailed: "Ada tamu (kategori) tiba di
@@ -154,7 +176,7 @@ fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner con
 
 ### Not built yet
 
-Report export (S8), the Could-have items and admin 2FA. There is no `openapi.yaml` yet.
+The Could-have items (C1 to C7) and admin 2FA. There is no `openapi.yaml` yet.
 
 ## Running the project
 

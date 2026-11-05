@@ -27,6 +27,10 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.NewResponseController reach the real writer, so a handler that streams a
+// large response (the report export) can flush it page by page.
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // Middleware assigns a request ID, sets secure headers and logs each request.
 // The log line carries method, path and status only: never bodies, tokens or
 // query strings.
@@ -61,6 +65,8 @@ func CORS(origin string, next http.Handler) http.Handler {
 		h := w.Header()
 		h.Set("Access-Control-Allow-Origin", origin)
 		h.Set("Vary", "Origin")
+		// A browser only lets a cross-origin page read the download's file name if it is exposed.
+		h.Set("Access-Control-Expose-Headers", "Content-Disposition")
 		if r.Method == http.MethodOptions {
 			h.Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")

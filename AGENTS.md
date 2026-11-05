@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repo. Product requirements live in
 
 **Housing Guest Book** (Buku Tamu Digital Perumahan): a backend API for a residential cluster's guest log. Guards (satpam) check guests in and out instead of holding their ID cards. Homeowners see only their own house's visits. Admins manage accounts, retention and audit.
 
-Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested, plus the Should-have items S1 (courier/ojol fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5 (offline sync), S6 (search) and S7 (long-stay flag); the other Should/Could items are not started. Stack and layout below describe the code as built. If you change them, update this file in the same change. Operations guide for retention, erasure and the privacy notice: [docs/RETENTION.md](docs/RETENTION.md).
+Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested, plus the Should-have items S1 (courier/ojol fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5 (offline sync), S6 (search), S7 (long-stay flag) and S8 (report export); the Could-have items are not started. Stack and layout below describe the code as built. If you change them, update this file in the same change. Operations guide for retention, erasure and the privacy notice: [docs/RETENTION.md](docs/RETENTION.md).
 
 ## Stack
 
@@ -73,6 +73,7 @@ These are the requirements most likely to be broken by a plausible-looking short
 Follow PRD section 7: `visits`, `houses`, `users`, `pre_registrations`, `audit_logs`; plus `refresh_tokens`, `settings` (retention limits, face-photo policy, privacy contact), `retention_runs` and `visit_decisions` (owner confirm/reject, S4). Conventions:
 
 - `pre_registrations` (S2) has `status` (`active|used|cancelled`), `created_by`, `used_at` and `anonymized_at`, and row-level security like `visits` (owners: own house only; no DELETE policy). A code is valid only on `expected_date` (WIB) and works once. Its guest name and plate are personal data: blanked on cancel and by retention.
+- The report export (S8, `internal/report`) is admin only and reads through `ListVisits`/`CountVisits`; it has no table of its own. It leaves out guest name, plate and note unless `include_personal=true`, never exports photos or guard names, is limited to 93 days (PDF also to 5000 rows), neutralises spreadsheet formulas in every text cell (a leading `'`), and writes one `visits_exported` audit row before any data is sent (format, period, filters, personal flag and row count; never a name or plate). A file that has been downloaded is outside the system and outside retention.
 - `notification_outbox` (S3) is a transactional outbox: check-in inserts one row per active owner of the house in its own transaction (only when SMTP is configured; courier/ojol only when the admin setting `notify_fast_lane` is on) and `notify.Worker` sends later, claiming rows with `FOR UPDATE SKIP LOCKED` and sending outside any transaction. It holds ids and times only: the owner's address is read from `users` at send time and the email is a fixed template that names no guest, so no guest data leaves the system. `last_error` is a short summary (for example `smtp reply 550`), never the server's text, which can quote an address. Never put a guest name, plate or address in the email, the outbox, a log line or an audit target.
 - Offline sync (S5) keeps rule 1 intact: `visits.client_captured_at` and `visits.client_checkout_captured_at` hold the device's time beside the server's `checkin_at`/`checkout_at`, which stay the receive times. Nothing filters, sorts, expires or flags by the device time. It must be at most 5 minutes ahead and 72 hours old (`visit.ClockSkew`, `visit.MaxOfflineAge`). The window is checked after the idempotent replay, and a repeat check-out is never re-validated.
 - The long-stay flag (S7) is computed, never stored: the SQL function `long_stay_hours()` reads the `long_stay_hours` setting (default 12, valid 1-168, anything else falls back to 12) and every visit query returns `overstay` from it, using the server's `checkin_at`.
@@ -94,7 +95,7 @@ Follow PRD section 7: `visits`, `houses`, `users`, `pre_registrations`, `audit_l
 
 ## Scope and priority
 
-Build in PRD order. **MVP = Must Have M1-M11.** S1, S2, S4 and S6 are built. Do not start the other Should/Could items (S3, S5, S7, S8, C1-C7) unless asked, but do not design the schema in a way that blocks them (S3 notifications, S5 offline, S7 long-stay flag). Non-goals: face recognition, ANPR, boom-gate integration, payments, native apps.
+Build in PRD order. **MVP = Must Have M1-M11.** All Should-have items S1-S8 are built. Do not start the Could-have items (C1-C7) unless asked, but do not design the schema in a way that blocks them (C1 watchlist, C2 regular guests, C3 plate OCR). Non-goals: face recognition, ANPR, boom-gate integration, payments, native apps.
 
 ## Code style
 

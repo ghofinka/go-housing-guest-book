@@ -35,6 +35,39 @@ func (q *Queries) CheckoutVisit(ctx context.Context, arg CheckoutVisitParams) (u
 	return id, err
 }
 
+const countVisits = `-- name: CountVisits :one
+SELECT count(*)::int
+FROM visits v
+WHERE ($1::text IS NULL OR v.status = $1)
+  AND ($2::uuid IS NULL OR v.house_id = $2)
+  AND ($3::text IS NULL OR v.category = $3)
+  AND v.checkin_at >= $4
+  AND v.checkin_at < $5
+`
+
+type CountVisitsParams struct {
+	Status   pgtype.Text `json:"status"`
+	HouseID  pgtype.UUID `json:"house_id"`
+	Category pgtype.Text `json:"category"`
+	FromAt   time.Time   `json:"from_at"`
+	BeforeAt time.Time   `json:"before_at"`
+}
+
+// Rows a report would contain (same filters as ListVisits, without paging), so a report can be
+// refused or audited with an exact count before it starts.
+func (q *Queries) CountVisits(ctx context.Context, arg CountVisitsParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countVisits,
+		arg.Status,
+		arg.HouseID,
+		arg.Category,
+		arg.FromAt,
+		arg.BeforeAt,
+	)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const createVisit = `-- name: CreateVisit :one
 INSERT INTO visits (client_request_id, house_id, guest_name, category, purpose_note, vehicle_plate, checkin_by,
                     vehicle_photo_path, face_photo_path, pre_registration_id, client_captured_at)

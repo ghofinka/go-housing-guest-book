@@ -36,6 +36,9 @@ var validCategories = map[string]bool{
 	"tamu": true, "kurir": true, "ojol": true, "tukang": true, "keluarga": true, "lainnya": true,
 }
 
+// ValidCategory reports whether s is one of the fixed visit categories.
+func ValidCategory(s string) bool { return validCategories[s] }
+
 // maxRequestBytes caps a multipart check-in: two photos plus form fields.
 const maxRequestBytes = 2*photo.MaxUploadBytes + 1<<20
 

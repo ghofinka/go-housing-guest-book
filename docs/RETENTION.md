@@ -128,6 +128,15 @@ provider's servers, outside this system, so the retention job and an erasure req
 This is why the message is kept minimal and why the public privacy notice discloses it (the line appears
 only when SMTP is configured).
 
+## Report exports (S8)
+
+An admin can export the visit log for a period as CSV or PDF. By default the file holds no guest name, plate
+or note; with `include_personal=true` it does. **A file that has been downloaded is outside this system**, so
+neither the retention job nor an erasure request can reach it, and the personal data in it keeps living after
+the 90-day limit. Every export is recorded in the audit log (`visits_exported`, with the period, the filters,
+whether personal data was included and the row count), so you can see who took what out and when. Keep exports
+that include personal data only as long as needed and delete them afterwards.
+
 ## Not covered yet
 
 - Retention of the audit log itself.

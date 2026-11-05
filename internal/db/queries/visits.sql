@@ -115,6 +115,17 @@ WHERE (sqlc.narg('status')::text IS NULL OR v.status = sqlc.narg('status'))
 ORDER BY v.checkin_at DESC, v.id DESC
 LIMIT sqlc.arg('page_size');
 
+-- name: CountVisits :one
+-- Rows a report would contain (same filters as ListVisits, without paging), so a report can be
+-- refused or audited with an exact count before it starts.
+SELECT count(*)::int
+FROM visits v
+WHERE (sqlc.narg('status')::text IS NULL OR v.status = sqlc.narg('status'))
+  AND (sqlc.narg('house_id')::uuid IS NULL OR v.house_id = sqlc.narg('house_id'))
+  AND (sqlc.narg('category')::text IS NULL OR v.category = sqlc.narg('category'))
+  AND v.checkin_at >= sqlc.arg('from_at')
+  AND v.checkin_at < sqlc.arg('before_at');
+
 -- name: GetVisitPhotoPaths :one
 SELECT vehicle_photo_path, face_photo_path
 FROM visits
