@@ -1,0 +1,583 @@
+### Housing Guest Book API: every endpoint, for the VS Code "REST Client" extension (humao.rest-client).
+###
+### How to use
+###   1. Start the API (`.\scripts\run.ps1`). The port comes from HTTP_ADDR in .env (change baseUrl to match).
+###   2. Send "loginAdmin" (and "loginGuard" / "loginOwner" for the role you need) first. REST Client asks for
+###      the email and password in a prompt, so no password is ever stored in this file. Keep it that way:
+###      this file is committed to git.
+###   3. Run the other requests. Ids and tokens are taken from earlier responses ({{name.response.body.$.field}}),
+###      so run them roughly top to bottom the first time.
+###
+### Roles: admin = manages everything and reads the audit log; guard = checks guests in and out;
+### owner = sees only their own house. Errors look like {"error": {"code": "...", "message": "..."}}.
+
+# Keep the http:// : without a scheme REST Client uses https, and the API speaks plain http locally
+# (that gives "EPROTO ... WRONG_VERSION_NUMBER").
+@baseUrl = http://localhost:8081
+
+# Tokens and ids filled in from the responses below.
+@adminToken = {{loginAdmin.response.body.$.access_token}}
+@guardToken = {{loginGuard.response.body.$.access_token}}
+@ownerToken = {{loginOwner.response.body.$.access_token}}
+@refreshToken = {{loginAdmin.response.body.$.refresh_token}}
+
+@houseId = {{createHouse.response.body.$.id}}
+@guardId = {{createGuard.response.body.$.id}}
+@ownerId = {{createOwner.response.body.$.id}}
+@visitId = {{checkInJson.response.body.$.id}}
+@photoVisitId = {{checkInMultipart.response.body.$.id}}
+@preRegId = {{createPreRegistration.response.body.$.id}}
+@preRegCode = {{createPreRegistration.response.body.$.code}}
+
+# A fixed key for the offline-sync examples: a retry with the same key returns the same visit (200).
+# Use a new UUID for every new guest.
+@clientRequestId = 3f2b8c1e-5d4a-4b6f-9a7e-1c2d3e4f5a6b
+
+
+################################################################################
+### Health and public pages (no login)
+################################################################################
+
+### Liveness
+# @name health
+GET {{baseUrl}}/healthz
+
+### Readiness (checks the database)
+# @name ready
+GET {{baseUrl}}/readyz
+
+### Privacy notice as JSON (public)
+# @name privacyNoticeJson
+GET {{baseUrl}}/v1/privacy-notice
+
+### Privacy notice as an HTML page (the one the gate poster's QR points to)
+# @name privacyNoticeHtml
+GET {{baseUrl}}/privacy
+
+
+################################################################################
+### Auth
+################################################################################
+
+### Log in as an admin. Asks for the email and password.
+# @name loginAdmin
+# @prompt email Admin email
+# @prompt password Admin password
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Log in as a guard
+# @name loginGuard
+# @prompt email Guard email
+# @prompt password Guard password
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Log in as an owner
+# @name loginOwner
+# @prompt email Owner email
+# @prompt password Owner password
+POST {{baseUrl}}/v1/auth/login
+Content-Type: application/json
+
+{
+  "email": "{{email}}",
+  "password": "{{password}}"
+}
+
+### Who am I (any role)
+# @name me
+GET {{baseUrl}}/v1/auth/me
+Authorization: Bearer {{adminToken}}
+
+### Get a new token pair. The old refresh token stops working (a reused one revokes the session),
+### so log in again afterwards instead of sending this twice.
+# @name refresh
+POST {{baseUrl}}/v1/auth/refresh
+Content-Type: application/json
+
+{
+  "refresh_token": "{{refreshToken}}"
+}
+
+### Change my own password. Asks for both passwords; the new one needs at least 10 characters.
+# @name changePassword
+# @prompt currentPassword Current password
+# @prompt newPassword New password (min 10 characters)
+POST {{baseUrl}}/v1/auth/password
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "current_password": "{{currentPassword}}",
+  "new_password": "{{newPassword}}"
+}
+
+### Log out (revokes the refresh token). Log in again afterwards.
+# @name logout
+POST {{baseUrl}}/v1/auth/logout
+Content-Type: application/json
+
+{
+  "refresh_token": "{{refreshToken}}"
+}
+
+
+################################################################################
+### Houses (admin writes; guard and admin read)
+################################################################################
+
+### List houses. Add ?include_inactive=true as an admin to see deactivated ones.
+# @name listHouses
+GET {{baseUrl}}/v1/houses
+Authorization: Bearer {{guardToken}}
+
+### Get one house
+# @name getHouse
+GET {{baseUrl}}/v1/houses/{{houseId}}
+Authorization: Bearer {{guardToken}}
+
+### Create a house. 409 if that block and number already exist: change them and send again.
+# @name createHouse
+POST {{baseUrl}}/v1/houses
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "block": "A",
+  "number": "1"
+}
+
+### Update or deactivate a house (send only the fields you change)
+# @name updateHouse
+PATCH {{baseUrl}}/v1/houses/{{houseId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "active": true
+}
+
+
+################################################################################
+### Users (admin)
+################################################################################
+
+### List users. Filters: role (guard|owner|admin), house_id, limit (1-200), cursor.
+# @name listUsers
+GET {{baseUrl}}/v1/users
+    ?role=owner
+    &limit=50
+Authorization: Bearer {{adminToken}}
+
+### Get one user
+# @name getUser
+GET {{baseUrl}}/v1/users/{{ownerId}}
+Authorization: Bearer {{adminToken}}
+
+### Create a guard. Asks for the new account's email and password (min 10 characters).
+# @name createGuard
+# @prompt guardEmail New guard email
+# @prompt guardPassword New guard password
+POST {{baseUrl}}/v1/users
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "name": "Guard Test",
+  "email": "{{guardEmail}}",
+  "password": "{{guardPassword}}",
+  "role": "guard"
+}
+
+### Create an owner of the house above (an owner must have a house_id)
+# @name createOwner
+# @prompt ownerEmail New owner email
+# @prompt ownerPassword New owner password
+POST {{baseUrl}}/v1/users
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "name": "Owner Test",
+  "email": "{{ownerEmail}}",
+  "password": "{{ownerPassword}}",
+  "role": "owner",
+  "house_id": "{{houseId}}",
+  "contact": "WA 0812-0000-0000"
+}
+
+### Update a user: name, contact, house_id, active, or a new password (send only what changes)
+# @name updateUser
+PATCH {{baseUrl}}/v1/users/{{ownerId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "contact": "WA 0812-1111-1111",
+  "active": true
+}
+
+
+################################################################################
+### Visits: check-in and check-out (guard)
+################################################################################
+
+### Check in a guest without photos (JSON). Categories: tamu, kurir, ojol, tukang, keluarga, lainnya.
+### A plate needs a vehicle photo (use the multipart request below), except for kurir and ojol.
+# @name checkInJson
+POST {{baseUrl}}/v1/visits
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "house_id": "{{houseId}}",
+  "guest_name": "Budi Test",
+  "category": "tamu",
+  "purpose_note": "Antar dokumen"
+}
+
+### Courier / ojol fast lane: only house and category are needed (no name, no photo)
+# @name checkInFastLane
+POST {{baseUrl}}/v1/visits
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "house_id": "{{houseId}}",
+  "category": "kurir"
+}
+
+### Check in with a vehicle photo (multipart). Put a real JPEG or PNG next to this file and fix the path.
+### face_photo is optional unless the cluster requires it. Photos up to 10 MB, re-encoded as JPEG.
+# @name checkInMultipart
+POST {{baseUrl}}/v1/visits
+Authorization: Bearer {{guardToken}}
+Content-Type: multipart/form-data; boundary=----GuestBookBoundary
+
+------GuestBookBoundary
+Content-Disposition: form-data; name="house_id"
+
+{{houseId}}
+------GuestBookBoundary
+Content-Disposition: form-data; name="guest_name"
+
+Siti Test
+------GuestBookBoundary
+Content-Disposition: form-data; name="category"
+
+tamu
+------GuestBookBoundary
+Content-Disposition: form-data; name="vehicle_plate"
+
+B 0000 XX
+------GuestBookBoundary
+Content-Disposition: form-data; name="vehicle_photo"; filename="plate.jpg"
+Content-Type: image/jpeg
+
+< ./plate.jpg
+------GuestBookBoundary--
+
+### Check in from a pre-registration code (house, name and plate come from the pre-registration).
+### The code is valid only on its expected date and works once.
+# @name checkInWithCode
+POST {{baseUrl}}/v1/visits
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "pre_registration_code": "{{preRegCode}}"
+}
+
+### Offline sync: check in with a key and the time the device recorded it. The server keeps its own time as
+### checkin_at; client_captured_at must be at most 5 minutes ahead and 72 hours old. Send twice: 201 then 200.
+# @name checkInOffline
+POST {{baseUrl}}/v1/visits
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "client_request_id": "{{clientRequestId}}",
+  "client_captured_at": "{{$datetime iso8601 -2 h}}",
+  "house_id": "{{houseId}}",
+  "guest_name": "Zaki Offline",
+  "category": "tamu"
+}
+
+### Check out by visit id. Safe to repeat: the first exit time is kept.
+# @name checkOut
+POST {{baseUrl}}/v1/visits/{{visitId}}/checkout
+Authorization: Bearer {{guardToken}}
+
+### Check out when the device recorded the exit offline (optional body)
+# @name checkOutWithDeviceTime
+POST {{baseUrl}}/v1/visits/{{visitId}}/checkout
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "client_captured_at": "{{$datetime iso8601 -30 m}}"
+}
+
+### Offline sync: check out by the key used at check-in, for a device that never learned the visit id.
+### 404 until the check-in with that key has been replayed.
+# @name checkOutByRequest
+POST {{baseUrl}}/v1/visits/by-request/{{clientRequestId}}/checkout
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "client_captured_at": "{{$datetime iso8601 -10 m}}"
+}
+
+
+################################################################################
+### Visits: reading (guard and admin see all houses; an owner only their own)
+################################################################################
+
+### List visits, newest first. Filters: status (inside|exited), house_id, from/to (YYYY-MM-DD, WIB),
+### category, name and plate (min 2 characters), decision (pending|approved|rejected), overstay=true,
+### limit (1-200), cursor (the next_cursor of the previous page).
+# @name listVisits
+GET {{baseUrl}}/v1/visits
+    ?status=inside
+    &limit=50
+Authorization: Bearer {{guardToken}}
+
+### Search by guest name and plate
+# @name searchVisits
+GET {{baseUrl}}/v1/visits
+    ?name=budi
+    &plate=b0000
+Authorization: Bearer {{guardToken}}
+
+### Guests still inside past the long-stay limit
+# @name listOverstay
+GET {{baseUrl}}/v1/visits
+    ?status=inside
+    &overstay=true
+Authorization: Bearer {{guardToken}}
+
+### Visits waiting for the owner's answer (an owner polls this)
+# @name listPending
+GET {{baseUrl}}/v1/visits
+    ?status=inside
+    &decision=pending
+Authorization: Bearer {{ownerToken}}
+
+### Visits on a date range
+# @name listByDate
+GET {{baseUrl}}/v1/visits
+    ?from=2026-11-01
+    &to=2026-11-30
+    &category=tamu
+Authorization: Bearer {{adminToken}}
+
+### Get one visit (another house's visit answers 404 to an owner)
+# @name getVisit
+GET {{baseUrl}}/v1/visits/{{visitId}}
+Authorization: Bearer {{guardToken}}
+
+### Download the vehicle photo. Needs the token, so open it from here, not from a browser.
+# @name vehiclePhoto
+GET {{baseUrl}}/v1/visits/{{photoVisitId}}/photos/vehicle
+Authorization: Bearer {{guardToken}}
+
+### Download the face photo (404 when none was taken)
+# @name facePhoto
+GET {{baseUrl}}/v1/visits/{{photoVisitId}}/photos/face
+Authorization: Bearer {{guardToken}}
+
+
+################################################################################
+### Owner answer and erasure
+################################################################################
+
+### Owner approves or rejects a guest who is inside. The first answer stands (409 if you change it).
+### Advice only: it never blocks check-in or check-out.
+# @name decide
+POST {{baseUrl}}/v1/visits/{{visitId}}/decision
+Authorization: Bearer {{ownerToken}}
+Content-Type: application/json
+
+{
+  "decision": "approved"
+}
+
+### Erase a guest's personal data on request (admin). DESTRUCTIVE: photos and name, plate and note are
+### removed now and cannot be recovered; the visit row stays for statistics.
+# @name erasePersonalData
+DELETE {{baseUrl}}/v1/visits/{{visitId}}/personal-data
+Authorization: Bearer {{adminToken}}
+
+
+################################################################################
+### Pre-registration (owner creates; guard looks a code up)
+################################################################################
+
+### Owner announces an expected guest. expected_date: today up to 30 days ahead (WIB). plate is optional.
+# @name createPreRegistration
+POST {{baseUrl}}/v1/pre-registrations
+Authorization: Bearer {{ownerToken}}
+Content-Type: application/json
+
+{
+  "guest_name": "Tamu Undangan",
+  "expected_date": "{{$localDatetime 'YYYY-MM-DD'}}",
+  "plate": "B 1234 ZZ"
+}
+
+### List pre-registrations (an owner sees their own house; an admin sees all). Filter: status, house_id, limit, cursor.
+# @name listPreRegistrations
+GET {{baseUrl}}/v1/pre-registrations
+    ?status=active
+Authorization: Bearer {{ownerToken}}
+
+### Get one pre-registration
+# @name getPreRegistration
+GET {{baseUrl}}/v1/pre-registrations/{{preRegId}}
+Authorization: Bearer {{ownerToken}}
+
+### Guard or admin looks a code up (any case; hyphens and spaces are ignored). The reply says if it is still valid.
+# @name preRegistrationByCode
+GET {{baseUrl}}/v1/pre-registrations/by-code/{{preRegCode}}
+Authorization: Bearer {{guardToken}}
+
+### Owner cancels a pre-registration (also blanks its name and plate). Safe to repeat.
+# @name cancelPreRegistration
+POST {{baseUrl}}/v1/pre-registrations/{{preRegId}}/cancel
+Authorization: Bearer {{ownerToken}}
+
+
+################################################################################
+### Settings (admin)
+################################################################################
+
+### Retention limits and the last runs. photo days must not exceed personal-data days.
+# @name getRetentionSettings
+GET {{baseUrl}}/v1/settings/retention
+Authorization: Bearer {{adminToken}}
+
+### Change the retention limits. Shortening a limit deletes data at the next run.
+# @name putRetentionSettings
+PUT {{baseUrl}}/v1/settings/retention
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "photo_retention_days": 30,
+  "personal_data_retention_days": 90
+}
+
+### Long-stay limit in hours (1-168, default 12)
+# @name getLongStaySettings
+GET {{baseUrl}}/v1/settings/long-stay
+Authorization: Bearer {{adminToken}}
+
+### Change the long-stay limit
+# @name putLongStaySettings
+PUT {{baseUrl}}/v1/settings/long-stay
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "long_stay_hours": 12
+}
+
+### Notification status: whether email is enabled, and how many are pending, sent, failed or skipped
+# @name getNotificationSettings
+GET {{baseUrl}}/v1/settings/notifications
+Authorization: Bearer {{adminToken}}
+
+### Also email owners for courier and ojol visits (off by default)
+# @name putNotificationSettings
+PUT {{baseUrl}}/v1/settings/notifications
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "notify_fast_lane": false
+}
+
+### Editable parts of the public privacy notice
+# @name getPrivacySettings
+GET {{baseUrl}}/v1/settings/privacy
+Authorization: Bearer {{adminToken}}
+
+### Change the contact and the extra note (a field you leave out stays as it is)
+# @name putPrivacySettings
+PUT {{baseUrl}}/v1/settings/privacy
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "contact": "Pengurus perumahan, WA 0812-0000-0000",
+  "extra_note": ""
+}
+
+
+################################################################################
+### Retention job (admin)
+################################################################################
+
+### Dry run: reports what a run would delete or blank, and changes nothing. Always do this first.
+# @name retentionDryRun
+POST {{baseUrl}}/v1/retention/run?dry_run=true
+Authorization: Bearer {{adminToken}}
+
+### Real run. DESTRUCTIVE and irreversible: deletes expired photos and blanks expired personal data.
+### The API already runs this daily at 02:00 WIB; only send it when you mean it.
+# @name retentionRun
+POST {{baseUrl}}/v1/retention/run
+Authorization: Bearer {{adminToken}}
+
+
+################################################################################
+### Audit log (admin)
+################################################################################
+
+### Who viewed, changed, deleted or exported data. Filters: user_id, action, target (prefix),
+### from/to (YYYY-MM-DD, WIB), limit (1-200), cursor.
+# @name listAuditLogs
+GET {{baseUrl}}/v1/audit-logs
+    ?action=visits_exported
+    &limit=50
+Authorization: Bearer {{adminToken}}
+
+
+################################################################################
+### Reports (admin). from and to are required, at most 93 days; every export is audited.
+### Optional: house_id, category, status (inside|exited), include_personal=true (adds guest name, plate, note).
+################################################################################
+
+### Visit log as CSV (UTF-8 with a byte-order mark, so Excel opens it correctly)
+# @name reportCsv
+GET {{baseUrl}}/v1/reports/visits.csv
+    ?from=2026-11-01
+    &to=2026-11-30
+Authorization: Bearer {{adminToken}}
+
+### Visit log as CSV including guest names, plates and notes (personal data: handle the file with care)
+# @name reportCsvPersonal
+GET {{baseUrl}}/v1/reports/visits.csv
+    ?from=2026-11-01
+    &to=2026-11-30
+    &include_personal=true
+Authorization: Bearer {{adminToken}}
+
+### Visit log as PDF (at most 5000 rows; use the CSV for more)
+# @name reportPdf
+GET {{baseUrl}}/v1/reports/visits.pdf
+    ?from=2026-11-01
+    &to=2026-11-30
+Authorization: Bearer {{adminToken}}
