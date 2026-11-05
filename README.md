@@ -7,8 +7,8 @@ and audit.
 
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
 fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5
-(offline sync), S6 (search), S7 (long-stay flag) and S8 (report export). The Could-have items are not
-started.
+(offline sync), S6 (search), S7 (long-stay flag) and S8 (report export), and the Could-have item C1
+(watchlist). The other Could-have items are not started.
 
 ## Tech stack
 
@@ -65,6 +65,22 @@ started.
   pre-registration, and the category defaults to `tamu`. A plate still needs its vehicle photo.
 - Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
   plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
+
+**Watchlist (PRD C1)**
+- An admin keeps a list of plates and names that need special attention: `POST/GET /v1/watchlist`,
+  `PATCH /v1/watchlist/{id}` (note, active) and `DELETE /v1/watchlist/{id}`. A plate is stored without
+  spaces in upper case, a name in lower case with single spaces, and a match is exact on that form. A
+  deactivated entry can be added again; `DELETE` removes it for good, so a plate or name can be erased.
+- When a guest is checked in with a listed plate or name, the check-in is **recorded as normal** and the
+  reply carries `watchlist_hit: true` plus the admin's short note in `watchlist_note`. It never blocks: the
+  guard decides at the gate. This applies on every path (plain, courier and ojol, pre-registration, offline).
+  The visit keeps `watchlist_hit` for later reads, but not the note, so editing an entry later does not
+  rewrite history. Each hit is audited as `watchlist_hit` against the visit.
+- The list is readable by **admins only**. A guard learns of a match only through the check-in reply, and
+  even the database refuses to show the list to the guard role (row-level security, with a
+  `SECURITY DEFINER` function that answers one note and nothing else). Owners never see the flag or the note.
+- Every change is audited (`watchlist_created`, `_updated`, `_deleted`, `_listed`) against the entry's id,
+  never the plate, name or note. Entries do not expire by themselves; the admin deletes them.
 
 **Report export (PRD S8)**
 - Admins download the visit log for a period: `GET /v1/reports/visits.csv` and `GET /v1/reports/visits.pdf`.
@@ -176,7 +192,7 @@ started.
 
 ### Not built yet
 
-The Could-have items (C1 to C7) and admin 2FA. There is no `openapi.yaml` yet.
+The Could-have items C2 to C7 and admin 2FA. There is no `openapi.yaml` yet.
 
 ## Running the project
 

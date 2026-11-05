@@ -33,6 +33,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/server"
 	"github.com/ghofinka/go-housing-guest-book/internal/user"
 	"github.com/ghofinka/go-housing-guest-book/internal/visit"
+	"github.com/ghofinka/go-housing-guest-book/internal/watchlist"
 )
 
 const testPassword = "Test Password 1"
@@ -130,6 +131,7 @@ func run(m *testing.M) (int, error) {
 		longstay.NewHandler(longstay.NewService(app), authn),
 		notify.NewHandler(notify.NewSettingsService(app, true), authn),
 		report.NewHandler(report.NewService(app), authn),
+		watchlist.NewHandler(watchlist.NewService(app), authn),
 		audit.NewHandler(audit.NewService(app), authn),
 		retention.NewHandler(retention.NewService(app, photos), authn),
 		privacy.NewHandler(privacy.NewService(app), authn),

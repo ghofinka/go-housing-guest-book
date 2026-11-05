@@ -70,8 +70,8 @@ func (q *Queries) CountVisits(ctx context.Context, arg CountVisitsParams) (int32
 
 const createVisit = `-- name: CreateVisit :one
 INSERT INTO visits (client_request_id, house_id, guest_name, category, purpose_note, vehicle_plate, checkin_by,
-                    vehicle_photo_path, face_photo_path, pre_registration_id, client_captured_at)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                    vehicle_photo_path, face_photo_path, pre_registration_id, client_captured_at, watchlist_hit)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 ON CONFLICT (client_request_id) DO NOTHING
 RETURNING id
 `
@@ -88,6 +88,7 @@ type CreateVisitParams struct {
 	FacePhotoPath     pgtype.Text        `json:"face_photo_path"`
 	PreRegistrationID pgtype.UUID        `json:"pre_registration_id"`
 	ClientCapturedAt  pgtype.Timestamptz `json:"client_captured_at"`
+	WatchlistHit      bool               `json:"watchlist_hit"`
 }
 
 // Returns no row when client_request_id already exists (idempotent retry).
@@ -104,6 +105,7 @@ func (q *Queries) CreateVisit(ctx context.Context, arg CreateVisitParams) (uuid.
 		arg.FacePhotoPath,
 		arg.PreRegistrationID,
 		arg.ClientCapturedAt,
+		arg.WatchlistHit,
 	)
 	var id uuid.UUID
 	err := row.Scan(&id)
@@ -122,7 +124,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
-       v.client_captured_at, v.client_checkout_captured_at
+       v.client_captured_at, v.client_checkout_captured_at,
+       v.watchlist_hit
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -152,6 +155,7 @@ type GetVisitRow struct {
 	Overstay                 bool               `json:"overstay"`
 	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
 	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
+	WatchlistHit             bool               `json:"watchlist_hit"`
 }
 
 func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, error) {
@@ -180,6 +184,7 @@ func (q *Queries) GetVisit(ctx context.Context, id uuid.UUID) (GetVisitRow, erro
 		&i.Overstay,
 		&i.ClientCapturedAt,
 		&i.ClientCheckoutCapturedAt,
+		&i.WatchlistHit,
 	)
 	return i, err
 }
@@ -196,7 +201,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
-       v.client_captured_at, v.client_checkout_captured_at
+       v.client_captured_at, v.client_checkout_captured_at,
+       v.watchlist_hit
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -226,6 +232,7 @@ type GetVisitByClientRequestIDRow struct {
 	Overstay                 bool               `json:"overstay"`
 	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
 	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
+	WatchlistHit             bool               `json:"watchlist_hit"`
 }
 
 func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID pgtype.UUID) (GetVisitByClientRequestIDRow, error) {
@@ -254,6 +261,7 @@ func (q *Queries) GetVisitByClientRequestID(ctx context.Context, clientRequestID
 		&i.Overstay,
 		&i.ClientCapturedAt,
 		&i.ClientCheckoutCapturedAt,
+		&i.WatchlistHit,
 	)
 	return i, err
 }
@@ -288,7 +296,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
-       v.client_captured_at, v.client_checkout_captured_at
+       v.client_captured_at, v.client_checkout_captured_at,
+       v.watchlist_hit
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -346,6 +355,7 @@ type ListInsideVisitsRow struct {
 	Overstay                 bool               `json:"overstay"`
 	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
 	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
+	WatchlistHit             bool               `json:"watchlist_hit"`
 }
 
 // Hot path (guests currently inside): literal status so the partial index applies.
@@ -393,6 +403,7 @@ func (q *Queries) ListInsideVisits(ctx context.Context, arg ListInsideVisitsPara
 			&i.Overstay,
 			&i.ClientCapturedAt,
 			&i.ClientCheckoutCapturedAt,
+			&i.WatchlistHit,
 		); err != nil {
 			return nil, err
 		}
@@ -416,7 +427,8 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
-       v.client_captured_at, v.client_checkout_captured_at
+       v.client_captured_at, v.client_checkout_captured_at,
+       v.watchlist_hit
 FROM visits v
 JOIN houses h ON h.id = v.house_id
 LEFT JOIN visit_decisions d ON d.visit_id = v.id
@@ -475,6 +487,7 @@ type ListVisitsRow struct {
 	Overstay                 bool               `json:"overstay"`
 	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
 	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
+	WatchlistHit             bool               `json:"watchlist_hit"`
 }
 
 func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListVisitsRow, error) {
@@ -522,6 +535,7 @@ func (q *Queries) ListVisits(ctx context.Context, arg ListVisitsParams) ([]ListV
 			&i.Overstay,
 			&i.ClientCapturedAt,
 			&i.ClientCheckoutCapturedAt,
+			&i.WatchlistHit,
 		); err != nil {
 			return nil, err
 		}

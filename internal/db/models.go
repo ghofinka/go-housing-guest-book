@@ -118,6 +118,7 @@ type Visit struct {
 	AnonymizedAt             pgtype.Timestamptz `json:"anonymized_at"`
 	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
 	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
+	WatchlistHit             bool               `json:"watchlist_hit"`
 }
 
 type VisitDecision struct {
@@ -126,4 +127,15 @@ type VisitDecision struct {
 	Decision  string    `json:"decision"`
 	DecidedBy uuid.UUID `json:"decided_by"`
 	DecidedAt time.Time `json:"decided_at"`
+}
+
+type WatchlistEntry struct {
+	ID        uuid.UUID `json:"id"`
+	Kind      string    `json:"kind"`
+	Value     string    `json:"value"`
+	Note      string    `json:"note"`
+	Active    bool      `json:"active"`
+	CreatedBy uuid.UUID `json:"created_by"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }

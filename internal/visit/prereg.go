@@ -68,6 +68,20 @@ func UsableOn(expected, now time.Time) bool {
 	return expected.Year() == y && expected.Month() == m && expected.Day() == d
 }
 
+// watchlistMatch asks the database whether the plate or the name is on the active watchlist. The
+// answer comes from the watchlist_check function, which returns one note and never the list, so a
+// guard's request can learn "this guest needs attention" but not who else is listed.
+func watchlistMatch(ctx context.Context, q *db.Queries, plate, name *string) (note string, hit bool, err error) {
+	if plate == nil && name == nil {
+		return "", false, nil
+	}
+	res, err := q.WatchlistCheck(ctx, db.WatchlistCheckParams{Plate: textOrNull(plate), Name: textOrNull(name)})
+	if err != nil {
+		return "", false, fmt.Errorf("check watchlist: %w", err)
+	}
+	return res.Note, res.Hit, nil
+}
+
 // useCode resolves in.PreRegistrationCode inside the check-in transaction. The row is locked
 // until the visit is saved, so a code works once. It fills the house, name and plate the guard
 // did not type and returns the pre-registration id to link and later mark as used.

@@ -137,6 +137,17 @@ the 90-day limit. Every export is recorded in the audit log (`visits_exported`, 
 whether personal data was included and the row count), so you can see who took what out and when. Keep exports
 that include personal data only as long as needed and delete them afterwards.
 
+## Watchlist (C1)
+
+The watchlist holds plates and names that an admin wants flagged at the gate. These are personal data, but the
+list is a deliberate, admin-managed record, so **entries do not expire on their own** and the daily job does not
+touch them. An admin removes an entry with `DELETE /v1/watchlist/{id}` (a real delete, so it can also be done
+on request); deactivating one only stops it matching. Review the list from time to time and delete what is no
+longer needed.
+
+A visit keeps only a yes/no flag (`watchlist_hit`), never the plate, name or note of the entry, and that flag is
+not personal data. The audit log records which entry was changed or hit by id, never its contents.
+
 ## Not covered yet
 
 - Retention of the audit log itself.

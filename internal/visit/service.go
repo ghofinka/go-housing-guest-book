@@ -125,6 +125,13 @@ type Visit struct {
 	// which stay the server's receive times; null when the request was made online.
 	ClientCapturedAt         *time.Time `json:"client_captured_at"`
 	ClientCheckoutCapturedAt *time.Time `json:"client_checkout_captured_at"`
+	// WatchlistHit says the plate or name matched the watchlist when the guest was recorded (PRD C1).
+	// It is a flag for the guard and the admin, never a block. Owners do not get the field at all, and the
+	// list itself is readable by admins only.
+	WatchlistHit *bool `json:"watchlist_hit,omitempty"`
+	// WatchlistNote is the admin's instruction for this match. It appears only in the response that
+	// recorded the visit and is not stored on the visit, so editing the entry later does not rewrite history.
+	WatchlistNote *string `json:"watchlist_note,omitempty"`
 }
 
 // Owner decision statuses, as stored in visit_decisions plus the default before an answer.
@@ -390,6 +397,13 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			*ph.key = &key
 		}
 
+		// Watchlist (PRD C1): a match is a flag for the guard, never a reason to refuse. The plate and name
+		// are the ones about to be stored, so a plate that came from a pre-registration is checked too.
+		watchNote, hit, err := watchlistMatch(ctx, q, in.VehiclePlate, in.GuestName)
+		if err != nil {
+			return err
+		}
+
 		id, err := q.CreateVisit(ctx, db.CreateVisitParams{
 			ClientRequestID:   uuidOrNull(in.ClientRequestID),
 			HouseID:           in.HouseID,
@@ -402,6 +416,7 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			FacePhotoPath:     textOrNull(faceKey),
 			PreRegistrationID: preRegID,
 			ClientCapturedAt:  timestamptzOrNullPtr(in.ClientCapturedAt),
+			WatchlistHit:      hit,
 		})
 		if errors.Is(err, pgx.ErrNoRows) { // lost a race with the same client_request_id
 			v, ok, err := replay(ctx, q, in.ClientRequestID)
@@ -433,6 +448,15 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			return fmt.Errorf("reload visit: %w", err)
 		}
 		out, created = toVisit(row), true
+		if hit {
+			// Told to the guard in this response only; the audit entry records that it happened.
+			if watchNote != "" {
+				out.WatchlistNote = &watchNote
+			}
+			if err := audit(ctx, q, p.UserID, "watchlist_hit", id); err != nil {
+				return err
+			}
+		}
 		return audit(ctx, q, p.UserID, "visit_checked_in", id)
 	})
 	if err != nil {
@@ -752,6 +776,7 @@ func toVisit(r row) Visit {
 		Status:                   r.Status,
 		Anonymized:               r.Anonymized,
 		Overstay:                 r.Overstay,
+		WatchlistHit:             &r.WatchlistHit,
 		ClientCapturedAt:         clientTime(r.ClientCapturedAt),
 		ClientCheckoutCapturedAt: clientTime(r.ClientCheckoutCapturedAt),
 		OwnerDecision:            OwnerDecision{Status: r.OwnerDecision},
@@ -788,6 +813,7 @@ func toVisit(r row) Visit {
 func forCaller(p auth.Principal, v Visit) Visit {
 	if p.Role == auth.RoleOwner {
 		v.CheckinBy, v.CheckoutBy = nil, nil
+		v.WatchlistHit, v.WatchlistNote = nil, nil
 	}
 	return v
 }

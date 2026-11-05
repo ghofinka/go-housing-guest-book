@@ -28,6 +28,7 @@
 @photoVisitId = {{checkInMultipart.response.body.$.id}}
 @preRegId = {{createPreRegistration.response.body.$.id}}
 @preRegCode = {{createPreRegistration.response.body.$.code}}
+@watchId = {{createWatchlistPlate.response.body.$.id}}
 
 # A fixed key for the offline-sync examples: a retry with the same key returns the same visit (200).
 # Use a new UUID for every new guest.
@@ -580,4 +581,57 @@ Authorization: Bearer {{adminToken}}
 GET {{baseUrl}}/v1/reports/visits.pdf
     ?from=2026-11-01
     &to=2026-11-30
+Authorization: Bearer {{adminToken}}
+
+
+################################################################################
+### Watchlist (admin only). Plates and names that need special attention at the gate. A match never blocks a
+### check-in: the guard's check-in reply carries watchlist_hit and the note. Guards and owners get 403 here.
+################################################################################
+
+### Add a plate. It is stored upper case without spaces; a duplicate active entry is a 409.
+# @name createWatchlistPlate
+POST {{baseUrl}}/v1/watchlist
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "kind": "plate",
+  "value": "B 0000 ZZ",
+  "note": "Hubungi pengurus sebelum membuka gerbang"
+}
+
+### Add a name. It is stored lower case with single spaces and matched exactly.
+# @name createWatchlistName
+POST {{baseUrl}}/v1/watchlist
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "kind": "name",
+  "value": "Nama Yang Perlu Diperhatikan",
+  "note": ""
+}
+
+### List entries, newest first. Filters: kind (plate|name), active (true|false), limit (1-200), cursor.
+# @name listWatchlist
+GET {{baseUrl}}/v1/watchlist
+    ?active=true
+    &limit=50
+Authorization: Bearer {{adminToken}}
+
+### Change the note, or deactivate an entry (send only what changes). Reactivating over an active duplicate is a 409.
+# @name updateWatchlist
+PATCH {{baseUrl}}/v1/watchlist/{{watchId}}
+Authorization: Bearer {{adminToken}}
+Content-Type: application/json
+
+{
+  "note": "Catatan baru",
+  "active": true
+}
+
+### Delete an entry for good (also how a plate or name is erased on request). Cannot be undone.
+# @name deleteWatchlist
+DELETE {{baseUrl}}/v1/watchlist/{{watchId}}
 Authorization: Bearer {{adminToken}}
