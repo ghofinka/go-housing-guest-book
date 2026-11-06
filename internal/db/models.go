@@ -90,12 +90,20 @@ type RetentionRun struct {
 	RecordsAnonymized int32              `json:"records_anonymized"`
 	Error             pgtype.Text        `json:"error"`
 	PreregsAnonymized int32              `json:"preregs_anonymized"`
+	ShiftNotesDeleted int32              `json:"shift_notes_deleted"`
 }
 
 type Setting struct {
 	Key       string    `json:"key"`
 	Value     string    `json:"value"`
 	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type ShiftNote struct {
+	ID        uuid.UUID `json:"id"`
+	AuthorID  uuid.UUID `json:"author_id"`
+	Body      string    `json:"body"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 type User struct {

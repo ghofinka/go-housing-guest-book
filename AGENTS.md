@@ -6,7 +6,7 @@ Guidance for AI coding agents working in this repo. Product requirements live in
 
 **Housing Guest Book** (Buku Tamu Digital Perumahan): a backend API for a residential cluster's guest log. Guards (satpam) check guests in and out instead of holding their ID cards. Homeowners see only their own house's visits. Admins manage accounts, retention and audit.
 
-Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested, plus the Should-have items S1 (courier/ojol fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5 (offline sync), S6 (search), S7 (long-stay flag) and S8 (report export), plus the Could-have items C1 (watchlist), C2 (regular guests) and C4 (statistics); the other Could-have items are not started. Stack and layout below describe the code as built. If you change them, update this file in the same change. Operations guide for retention, erasure and the privacy notice: [docs/RETENTION.md](docs/RETENTION.md).
+Status: the MVP backend (PRD Must Have M1-M11) is implemented and tested, plus the Should-have items S1 (courier/ojol fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5 (offline sync), S6 (search), S7 (long-stay flag) and S8 (report export), plus the Could-have items C1 (watchlist), C2 (regular guests), C4 (statistics) and C5 (shift notes); the other Could-have items are not started. Stack and layout below describe the code as built. If you change them, update this file in the same change. Operations guide for retention, erasure and the privacy notice: [docs/RETENTION.md](docs/RETENTION.md).
 
 ## Stack
 
@@ -97,7 +97,7 @@ Follow PRD section 7: `visits`, `houses`, `users`, `pre_registrations`, `audit_l
 
 ## Scope and priority
 
-Build in PRD order. **MVP = Must Have M1-M11.** All Should-have items S1-S8 and the Could-have items C1, C2 and C4 are built. Do not start the other Could-have items (C3-C7) unless asked, but do not design the schema in a way that blocks them (C3 plate OCR, C7 visitor cards). Non-goals: face recognition, ANPR, boom-gate integration, payments, native apps.
+Build in PRD order. **MVP = Must Have M1-M11.** All Should-have items S1-S8 and the Could-have items C1, C2, C4 and C5 are built. Do not start the other Could-have items (C3-C7) unless asked, but do not design the schema in a way that blocks them (C3 plate OCR, C7 visitor cards). Non-goals: face recognition, ANPR, boom-gate integration, payments, native apps.
 
 ## Code style
 

@@ -36,6 +36,9 @@ type settingsResponse struct {
 type putRequest struct {
 	PhotoDays        *int `json:"photo_retention_days"`
 	PersonalDataDays *int `json:"personal_data_retention_days"`
+	// ShiftNoteDays is optional: a client that only knows the two older limits keeps working, and the
+	// current shift-note limit is left as it is.
+	ShiftNoteDays *int `json:"shift_note_retention_days"`
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
@@ -59,6 +62,16 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	in := Settings{PhotoDays: *req.PhotoDays, PersonalDataDays: *req.PersonalDataDays}
+	if req.ShiftNoteDays != nil {
+		in.ShiftNoteDays = *req.ShiftNoteDays
+	} else {
+		cur, err := h.svc.Settings(r.Context())
+		if err != nil {
+			h.serverError(w, r, err)
+			return
+		}
+		in.ShiftNoteDays = cur.ShiftNoteDays
+	}
 	if problems := in.Validate(); len(problems) > 0 {
 		httpx.ValidationError(w, problems)
 		return

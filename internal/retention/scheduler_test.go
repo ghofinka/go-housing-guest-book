@@ -49,8 +49,8 @@ func TestParseRunAt(t *testing.T) {
 }
 
 func TestSettingsValidate(t *testing.T) {
-	ok := []Settings{{30, 90}, {1, 1}, {90, 90}, {365, 1095}}
-	bad := []Settings{{0, 90}, {30, 0}, {366, 1095}, {30, 1096}, {91, 90}, {-1, 90}}
+	ok := []Settings{{30, 90, 30}, {1, 1, 1}, {90, 90, 30}, {365, 1095, 365}}
+	bad := []Settings{{0, 90, 30}, {30, 0, 30}, {366, 1095, 30}, {30, 1096, 30}, {91, 90, 30}, {-1, 90, 30}, {30, 90, 0}, {30, 90, 366}}
 	for _, s := range ok {
 		if p := s.Validate(); len(p) != 0 {
 			t.Errorf("%+v should be valid: %v", s, p)

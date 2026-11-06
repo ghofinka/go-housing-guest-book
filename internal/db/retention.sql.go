@@ -156,7 +156,7 @@ func (q *Queries) EraseVisit(ctx context.Context, id uuid.UUID) error {
 
 const finishRetentionRun = `-- name: FinishRetentionRun :exec
 UPDATE retention_runs
-SET finished_at = now(), photos_deleted = $2, records_anonymized = $3, preregs_anonymized = $4, error = $5
+SET finished_at = now(), photos_deleted = $2, records_anonymized = $3, preregs_anonymized = $4, shift_notes_deleted = $5, error = $6
 WHERE id = $1
 `
 
@@ -165,6 +165,7 @@ type FinishRetentionRunParams struct {
 	PhotosDeleted     int32       `json:"photos_deleted"`
 	RecordsAnonymized int32       `json:"records_anonymized"`
 	PreregsAnonymized int32       `json:"preregs_anonymized"`
+	ShiftNotesDeleted int32       `json:"shift_notes_deleted"`
 	Error             pgtype.Text `json:"error"`
 }
 
@@ -174,6 +175,7 @@ func (q *Queries) FinishRetentionRun(ctx context.Context, arg FinishRetentionRun
 		arg.PhotosDeleted,
 		arg.RecordsAnonymized,
 		arg.PreregsAnonymized,
+		arg.ShiftNotesDeleted,
 		arg.Error,
 	)
 	return err
@@ -263,7 +265,7 @@ func (q *Queries) ListPhotoPurgeBatch(ctx context.Context, arg ListPhotoPurgeBat
 }
 
 const listRetentionRuns = `-- name: ListRetentionRuns :many
-SELECT id, started_at, finished_at, trigger, dry_run, photos_deleted, records_anonymized, preregs_anonymized, error
+SELECT id, started_at, finished_at, trigger, dry_run, photos_deleted, records_anonymized, preregs_anonymized, shift_notes_deleted, error
 FROM retention_runs
 ORDER BY id DESC
 LIMIT $1
@@ -278,6 +280,7 @@ type ListRetentionRunsRow struct {
 	PhotosDeleted     int32              `json:"photos_deleted"`
 	RecordsAnonymized int32              `json:"records_anonymized"`
 	PreregsAnonymized int32              `json:"preregs_anonymized"`
+	ShiftNotesDeleted int32              `json:"shift_notes_deleted"`
 	Error             pgtype.Text        `json:"error"`
 }
 
@@ -299,6 +302,7 @@ func (q *Queries) ListRetentionRuns(ctx context.Context, limit int32) ([]ListRet
 			&i.PhotosDeleted,
 			&i.RecordsAnonymized,
 			&i.PreregsAnonymized,
+			&i.ShiftNotesDeleted,
 			&i.Error,
 		); err != nil {
 			return nil, err

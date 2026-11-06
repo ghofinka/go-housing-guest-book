@@ -36,6 +36,7 @@ type runResult struct {
 	DryRun            bool  `json:"dry_run"`
 	PhotosDeleted     int   `json:"photos_deleted"`
 	RecordsAnonymized int   `json:"records_anonymized"`
+	ShiftNotesDeleted int   `json:"shift_notes_deleted"`
 	FilesFailed       int   `json:"files_failed"`
 }
 
@@ -43,7 +44,7 @@ type runResult struct {
 func resetRetentionSettings(t *testing.T) {
 	t.Helper()
 	set := func() {
-		for k, v := range map[string]string{"photo_retention_days": "30", "personal_data_retention_days": "90"} {
+		for k, v := range map[string]string{"photo_retention_days": "30", "personal_data_retention_days": "90", "shift_note_retention_days": "30"} {
 			if _, err := owner.Exec(context.Background(), `UPDATE settings SET value = $2, updated_at = now() WHERE key = $1`, k, v); err != nil {
 				t.Fatal(err)
 			}

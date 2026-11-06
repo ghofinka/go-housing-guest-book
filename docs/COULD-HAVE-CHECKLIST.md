@@ -12,10 +12,10 @@ Branch: `feature/improvements` (from `1bcbf7a`). One commit per item. Last updat
 | C2 | Regular guests | 15 / 15 | **Done** and committed |
 | C3 | Plate OCR | 0 / 10 | **On hold**: waiting for your decision on the engine |
 | C4 | Statistics dashboard | 13 / 13 | **Done** and committed |
-| C5 | Shift handover notes | 0 / 15 | Not started |
+| C5 | Shift handover notes | 15 / 15 | **Done** and committed |
 | C6 | Multi-language | 0 / 16 | Not started (done last, so it covers every message above) |
 | C7 | Visitor card number | 0 / 12 | Not started |
-| | **Total** | **44 / 97** | |
+| | **Total** | **59 / 97** | |
 
 Order: C1, C2, C4, C5, C7, then C6 last. C3 comes in when its engine is decided.
 
@@ -92,23 +92,23 @@ Every item ends with the same closing steps: full suite green, migration up/down
 - [x] C4.12 Change log
 - [x] C4.13 Commit
 
-## C5 Shift handover notes (0 / 15)
+## C5 Shift handover notes (15 / 15)
 
-- [ ] C5.1 Migration: table `shift_notes` with row-level security (guard and admin read and insert, admin delete)
-- [ ] C5.2 sqlc queries and regenerate
-- [ ] C5.3 Create and list endpoints (guard and admin; newest first, paging, `from`/`to`)
-- [ ] C5.4 Admin-only delete
-- [ ] C5.5 Setting `shift_note_retention_days` (default 30, 1-365), optional in `PUT /v1/settings/retention`
-- [ ] C5.6 Retention job deletes expired notes; counted in `retention_runs` and in the run result and dry run
-- [ ] C5.7 Audit (created, deleted), never the text
-- [ ] C5.8 Wire the handler in `main.go` and the e2e environment
-- [ ] C5.9 Tests: create, list, paging, roles, length, delete, retention of old notes only, backward-compatible PUT
-- [ ] C5.10 Negative checks
-- [ ] C5.11 Full suite green and migration up/down/up
-- [ ] C5.12 Docs, including `docs/RETENTION.md`
-- [ ] C5.13 `.http`
-- [ ] C5.14 Change log
-- [ ] C5.15 Commit
+- [x] C5.1 Migration: table `shift_notes` with row-level security (guard and admin read and insert, admin delete)
+- [x] C5.2 sqlc queries and regenerate
+- [x] C5.3 Create and list endpoints (guard and admin; newest first, paging, `from`/`to`)
+- [x] C5.4 Admin-only delete
+- [x] C5.5 Setting `shift_note_retention_days` (default 30, 1-365), optional in `PUT /v1/settings/retention`
+- [x] C5.6 Retention job deletes expired notes; counted in `retention_runs` and in the run result and dry run
+- [x] C5.7 Audit (created, deleted), never the text
+- [x] C5.8 Wire the handler in `main.go` and the e2e environment
+- [x] C5.9 Tests: create, list, paging, roles, length, delete, retention of old notes only, backward-compatible PUT
+- [x] C5.10 Negative checks
+- [x] C5.11 Full suite green and migration up/down/up
+- [x] C5.12 Docs, including `docs/RETENTION.md`
+- [x] C5.13 `.http`
+- [x] C5.14 Change log
+- [x] C5.15 Commit
 
 ## C6 Multi-language (0 / 16)
 

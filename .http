@@ -30,6 +30,7 @@
 @preRegCode = {{createPreRegistration.response.body.$.code}}
 @watchId = {{createWatchlistPlate.response.body.$.id}}
 @regularId = {{createRegularGuest.response.body.$.id}}
+@shiftNoteId = {{createShiftNote.response.body.$.id}}
 
 # A fixed key for the offline-sync examples: a retry with the same key returns the same visit (200).
 # Use a new UUID for every new guest.
@@ -488,7 +489,8 @@ Content-Type: application/json
 
 {
   "photo_retention_days": 30,
-  "personal_data_retention_days": 90
+  "personal_data_retention_days": 90,
+  "shift_note_retention_days": 30
 }
 
 ### Long-stay limit in hours (1-168, default 12)
@@ -703,4 +705,30 @@ Authorization: Bearer {{ownerToken}}
 GET {{baseUrl}}/v1/stats/visits
     ?from=2026-11-01
     &to=2026-11-06
+Authorization: Bearer {{adminToken}}
+
+
+################################################################################
+### Shift handover notes. Guards and admins read and write; only an admin deletes. Notes expire (retention).
+################################################################################
+
+### Guard leaves a note for the next shift (1-1000 characters).
+# @name createShiftNote
+POST {{baseUrl}}/v1/shift-notes
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "body": "Gerbang 2 rusak, pakai gerbang 1."
+}
+
+### Read the notes, newest first. from/to are days in WIB (both included); limit and cursor page through.
+# @name listShiftNotes
+GET {{baseUrl}}/v1/shift-notes
+    ?limit=50
+Authorization: Bearer {{guardToken}}
+
+### Admin deletes a note for good.
+# @name deleteShiftNote
+DELETE {{baseUrl}}/v1/shift-notes/{{shiftNoteId}}
 Authorization: Bearer {{adminToken}}

@@ -10,6 +10,7 @@ deleted, and the public privacy notice (PRD M8). Written for the person who runs
 | Vehicle and face photos | File deleted, photo link removed | **30 days** after check-in | `photo_retention_days` |
 | Guest name, plate, purpose note | Blanked (set to empty) | **90 days** after check-in | `personal_data_retention_days` |
 | Pre-registration guest name and plate (S2) | Blanked (set to empty); also blanked at once when the owner cancels | **90 days** after it was created | `personal_data_retention_days` |
+| Shift handover note (C5) | Deleted (the whole row) | **30 days** after it was written | `shift_note_retention_days` |
 | Visit record itself (house, category, entry/exit times, status) | Kept, without the personal fields | kept | - |
 | Audit log | Kept (no personal data in it: ids, actions, times) | no limit yet | - |
 
@@ -17,7 +18,9 @@ deleted, and the public privacy notice (PRD M8). Written for the person who runs
   treated the same, so a forgotten check-out cannot keep data forever. A pre-registration is counted
   from the day it was created, whether or not it was used.
 - Photos may not outlive the personal text: `photo_retention_days` must be <= `personal_data_retention_days`.
-- Allowed range: photos 1-365 days, personal data 1-1095 days.
+- Allowed range: photos 1-365 days, personal data 1-1095 days, shift notes 1-365 days.
+- A shift note is free text a guard types, so it can hold a name or a plate by accident. It is therefore
+  deleted outright (not blanked) after its own limit, and the audit log only ever holds the note's id.
 - Shortening a limit deletes data at the next run, and **deleted data cannot be recovered**.
 
 ## The daily job
@@ -60,7 +63,7 @@ Exit code 0 = finished cleanly. Non-zero = an error, or some photo files could n
 
 ### Check that it is working
 
-`GET /v1/settings/retention` (admin) returns the two limits and the last 10 runs (when, trigger
+`GET /v1/settings/retention` (admin) returns the limits and the last 10 runs (when, trigger
 `schedule`/`manual`/`cli`, counts, and any error). A run with `error` set needs attention. The audit log
 (`GET /v1/audit-logs?action=retention_run`) shows who started manual runs.
 
@@ -68,10 +71,10 @@ Exit code 0 = finished cleanly. Non-zero = an error, or some photo files could n
 
 ```
 PUT /v1/settings/retention
-{ "photo_retention_days": 30, "personal_data_retention_days": 90 }
+{ "photo_retention_days": 30, "personal_data_retention_days": 90, "shift_note_retention_days": 30 }
 ```
 
-Both fields are required. The change is audited (old and new values) and applies from the next run. The
+The first two fields are required; `shift_note_retention_days` is optional and, when left out, stays as it is. The change is audited (old and new values) and applies from the next run. The
 public privacy notice shows the new numbers immediately.
 
 ## Deleting a guest's data on request

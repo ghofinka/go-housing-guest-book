@@ -8,7 +8,7 @@ and audit.
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
 fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5
 (offline sync), S6 (search), S7 (long-stay flag) and S8 (report export), and the Could-have items C1
-(watchlist), C2 (regular guests) and C4 (statistics). The other Could-have items are not started.
+(watchlist), C2 (regular guests), C4 (statistics) and C5 (shift notes). The other Could-have items are not started.
 
 ## Tech stack
 
@@ -85,6 +85,15 @@ fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner con
   `_deleted` (and `regular_guests_listed` for an owner or admin), always by id, never by name or plate.
 - The list is the owner's standing consent and does not expire by itself; the owner deletes entries whenever
   they like.
+
+**Shift handover notes (PRD C5)**
+- A guard leaves a note for the next shift: `POST /v1/shift-notes` (`body`, 1-1000 characters) and reads them with
+  `GET /v1/shift-notes` (newest first, `limit`/`cursor` paging, optional `from`/`to` days in WIB). Each note shows its
+  author. Guards and admins read and write; owners get 403.
+- Only an admin deletes a note (`DELETE /v1/shift-notes/{id}`), so a guard cannot rewrite what the previous shift left.
+- Notes are free text, so they expire: the retention job deletes them after `shift_note_retention_days` (default 30,
+  1-365), set in the optional field of `PUT /v1/settings/retention`. Runs report `shift_notes_deleted`.
+- Audit: `shift_note_created` and `shift_note_deleted`, by note id only, never the text. Reading is not audited.
 
 **Statistics (PRD C4)**
 - `GET /v1/stats/visits` is a separate endpoint a frontend can call right after login. Every role may call it; the

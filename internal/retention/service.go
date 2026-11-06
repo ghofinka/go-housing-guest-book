@@ -28,14 +28,18 @@ import (
 const (
 	SettingPhotoDays    = "photo_retention_days"
 	SettingPersonalDays = "personal_data_retention_days"
+	// SettingShiftNoteDays is how long a shift handover note (PRD C5) is kept.
+	SettingShiftNoteDays = "shift_note_retention_days"
 
-	defaultPhotoDays    = 30
-	defaultPersonalDays = 90
+	defaultPhotoDays     = 30
+	defaultPersonalDays  = 90
+	defaultShiftNoteDays = 30
 
 	// Bounds for admin-set limits.
-	MinDays         = 1
-	MaxPhotoDays    = 365
-	MaxPersonalDays = 1095
+	MinDays          = 1
+	MaxPhotoDays     = 365
+	MaxPersonalDays  = 1095
+	MaxShiftNoteDays = 365
 
 	batchSize = 200
 	// LockKey is the Postgres advisory lock that keeps two runs (two API
@@ -53,10 +57,11 @@ const (
 	TriggerCLI      Trigger = "cli"
 )
 
-// Settings are the two retention limits, in days.
+// Settings are the retention limits, in days.
 type Settings struct {
 	PhotoDays        int `json:"photo_retention_days"`
 	PersonalDataDays int `json:"personal_data_retention_days"`
+	ShiftNoteDays    int `json:"shift_note_retention_days"`
 }
 
 // Validate returns field-level problems (field name -> message). A photo must not
@@ -68,6 +73,9 @@ func (s Settings) Validate() map[string]string {
 	}
 	if s.PersonalDataDays < MinDays || s.PersonalDataDays > MaxPersonalDays {
 		f[SettingPersonalDays] = fmt.Sprintf("Harus antara %d dan %d hari.", MinDays, MaxPersonalDays)
+	}
+	if s.ShiftNoteDays < MinDays || s.ShiftNoteDays > MaxShiftNoteDays {
+		f[SettingShiftNoteDays] = fmt.Sprintf("Harus antara %d dan %d hari.", MinDays, MaxShiftNoteDays)
 	}
 	if len(f) == 0 && s.PhotoDays > s.PersonalDataDays {
 		f[SettingPhotoDays] = "Masa simpan foto tidak boleh lebih lama dari masa simpan data pribadi."
@@ -83,6 +91,8 @@ type Result struct {
 	RecordsAnonymized int   `json:"records_anonymized"`
 	// PreRegsAnonymized counts pre-registrations (PRD S2) whose guest name and plate were blanked.
 	PreRegsAnonymized int `json:"preregs_anonymized"`
+	// ShiftNotesDeleted counts shift handover notes (PRD C5) deleted for being past their limit.
+	ShiftNotesDeleted int `json:"shift_notes_deleted"`
 	// FilesFailed counts visits whose photo file could not be deleted; they keep
 	// their photo path and are retried by the next run.
 	FilesFailed int `json:"files_failed"`
@@ -98,6 +108,7 @@ type RunInfo struct {
 	PhotosDeleted     int        `json:"photos_deleted"`
 	RecordsAnonymized int        `json:"records_anonymized"`
 	PreRegsAnonymized int        `json:"preregs_anonymized"`
+	ShiftNotesDeleted int        `json:"shift_notes_deleted"`
 	Error             *string    `json:"error"`
 }
 
@@ -118,7 +129,7 @@ func (s *Service) Settings(ctx context.Context) (Settings, error) {
 }
 
 func loadSettings(ctx context.Context, q *db.Queries) (Settings, error) {
-	rows, err := q.GetSettings(ctx, []string{SettingPhotoDays, SettingPersonalDays})
+	rows, err := q.GetSettings(ctx, []string{SettingPhotoDays, SettingPersonalDays, SettingShiftNoteDays})
 	if err != nil {
 		return Settings{}, fmt.Errorf("read retention settings: %w", err)
 	}
@@ -128,7 +139,7 @@ func loadSettings(ctx context.Context, q *db.Queries) (Settings, error) {
 // SettingsFromRows picks the retention limits out of settings rows (other keys are
 // ignored), applying the defaults for missing ones and validating the result.
 func SettingsFromRows(rows []db.Setting) (Settings, error) {
-	out := Settings{PhotoDays: defaultPhotoDays, PersonalDataDays: defaultPersonalDays}
+	out := Settings{PhotoDays: defaultPhotoDays, PersonalDataDays: defaultPersonalDays, ShiftNoteDays: defaultShiftNoteDays}
 	for _, r := range rows {
 		var field *int
 		switch r.Key {
@@ -136,6 +147,8 @@ func SettingsFromRows(rows []db.Setting) (Settings, error) {
 			field = &out.PhotoDays
 		case SettingPersonalDays:
 			field = &out.PersonalDataDays
+		case SettingShiftNoteDays:
+			field = &out.ShiftNoteDays
 		default:
 			continue // not a retention setting
 		}
@@ -158,16 +171,21 @@ func (s *Service) UpdateSettings(ctx context.Context, actor uuid.UUID, in Settin
 		if err != nil {
 			return err
 		}
-		for key, v := range map[string]int{SettingPhotoDays: in.PhotoDays, SettingPersonalDays: in.PersonalDataDays} {
+		for key, v := range map[string]int{SettingPhotoDays: in.PhotoDays, SettingPersonalDays: in.PersonalDataDays, SettingShiftNoteDays: in.ShiftNoteDays} {
 			if err := q.UpsertSetting(ctx, db.UpsertSettingParams{Key: key, Value: strconv.Itoa(v)}); err != nil {
 				return fmt.Errorf("save %s: %w", key, err)
 			}
 		}
+		target := fmt.Sprintf("%s:%d->%d,%s:%d->%d", SettingPhotoDays, old.PhotoDays, in.PhotoDays,
+			SettingPersonalDays, old.PersonalDataDays, in.PersonalDataDays)
+		// Named only when it changed, so a change to the two older limits is audited exactly as before.
+		if old.ShiftNoteDays != in.ShiftNoteDays {
+			target += fmt.Sprintf(",%s:%d->%d", SettingShiftNoteDays, old.ShiftNoteDays, in.ShiftNoteDays)
+		}
 		return q.InsertAuditLog(ctx, db.InsertAuditLogParams{
 			UserID: pgtype.UUID{Bytes: actor, Valid: true},
 			Action: "retention_settings_changed",
-			Target: fmt.Sprintf("%s:%d->%d,%s:%d->%d", SettingPhotoDays, old.PhotoDays, in.PhotoDays,
-				SettingPersonalDays, old.PersonalDataDays, in.PersonalDataDays),
+			Target: target,
 		})
 	})
 	if err != nil {
@@ -186,7 +204,7 @@ func (s *Service) Runs(ctx context.Context, limit int) ([]RunInfo, error) {
 	for _, r := range rows {
 		ri := RunInfo{
 			ID: r.ID, StartedAt: r.StartedAt.In(httpx.WIB), Trigger: r.Trigger, DryRun: r.DryRun,
-			PhotosDeleted: int(r.PhotosDeleted), RecordsAnonymized: int(r.RecordsAnonymized), PreRegsAnonymized: int(r.PreregsAnonymized),
+			PhotosDeleted: int(r.PhotosDeleted), RecordsAnonymized: int(r.RecordsAnonymized), PreRegsAnonymized: int(r.PreregsAnonymized), ShiftNotesDeleted: int(r.ShiftNotesDeleted),
 		}
 		if r.FinishedAt.Valid {
 			t := r.FinishedAt.Time.In(httpx.WIB)
@@ -231,17 +249,18 @@ func (s *Service) Run(ctx context.Context, trigger Trigger, actor *uuid.UUID, dr
 	now := s.now()
 	photoCutoff := now.AddDate(0, 0, -cfg.PhotoDays)
 	personalCutoff := now.AddDate(0, 0, -cfg.PersonalDataDays)
+	noteCutoff := now.AddDate(0, 0, -cfg.ShiftNoteDays)
 
-	runErr := s.work(ctx, &res, photoCutoff, personalCutoff)
+	runErr := s.work(ctx, &res, photoCutoff, personalCutoff, noteCutoff)
 	s.finish(ctx, trigger, actor, res, runErr)
 	slog.Info("retention run finished", "run_id", runID, "trigger", string(trigger), "dry_run", dryRun,
 		"photos_deleted", res.PhotosDeleted, "records_anonymized", res.RecordsAnonymized,
-		"preregs_anonymized", res.PreRegsAnonymized,
+		"preregs_anonymized", res.PreRegsAnonymized, "shift_notes_deleted", res.ShiftNotesDeleted,
 		"files_failed", res.FilesFailed, "failed", runErr != nil)
 	return res, runErr
 }
 
-func (s *Service) work(ctx context.Context, res *Result, photoCutoff, personalCutoff time.Time) error {
+func (s *Service) work(ctx context.Context, res *Result, photoCutoff, personalCutoff, noteCutoff time.Time) error {
 	if res.DryRun {
 		return db.InTx(ctx, s.pool, auth.RoleAdmin, nil, func(q *db.Queries) error {
 			photos, err := q.CountPhotosToPurge(ctx, photoCutoff)
@@ -253,7 +272,11 @@ func (s *Service) work(ctx context.Context, res *Result, photoCutoff, personalCu
 				return err
 			}
 			preRegs, err := q.CountPreRegistrationsToAnonymize(ctx, personalCutoff)
-			res.PhotosDeleted, res.RecordsAnonymized, res.PreRegsAnonymized = int(photos), int(records), int(preRegs)
+			if err != nil {
+				return err
+			}
+			notes, err := q.CountShiftNotesToDelete(ctx, noteCutoff)
+			res.PhotosDeleted, res.RecordsAnonymized, res.PreRegsAnonymized, res.ShiftNotesDeleted = int(photos), int(records), int(preRegs), int(notes)
 			return err
 		})
 	}
@@ -265,6 +288,9 @@ func (s *Service) work(ctx context.Context, res *Result, photoCutoff, personalCu
 	}
 	if err := s.anonymizePreRegistrations(ctx, res, personalCutoff); err != nil {
 		return fmt.Errorf("anonymize pre-registrations: %w", err)
+	}
+	if err := s.deleteShiftNotes(ctx, res, noteCutoff); err != nil {
+		return fmt.Errorf("delete shift notes: %w", err)
 	}
 	return nil
 }
@@ -362,6 +388,25 @@ func (s *Service) anonymizePreRegistrations(ctx context.Context, res *Result, cu
 	}
 }
 
+// deleteShiftNotes deletes shift handover notes older than the cutoff, in batches.
+func (s *Service) deleteShiftNotes(ctx context.Context, res *Result, cutoff time.Time) error {
+	for {
+		var n int
+		err := db.InTx(ctx, s.pool, auth.RoleAdmin, nil, func(q *db.Queries) error {
+			ids, err := q.DeleteExpiredShiftNotesBatch(ctx, db.DeleteExpiredShiftNotesBatchParams{Cutoff: cutoff, BatchSize: batchSize})
+			n = len(ids)
+			return err
+		})
+		if err != nil {
+			return err
+		}
+		res.ShiftNotesDeleted += n
+		if n == 0 {
+			return nil
+		}
+	}
+}
+
 // finish records the outcome in retention_runs and the audit log. It uses a
 // context that survives cancellation so an interrupted run still leaves a record.
 func (s *Service) finish(ctx context.Context, trigger Trigger, actor *uuid.UUID, res Result, runErr error) {
@@ -376,7 +421,7 @@ func (s *Service) finish(ctx context.Context, trigger Trigger, actor *uuid.UUID,
 	}
 	if err := q.FinishRetentionRun(ctx, db.FinishRetentionRunParams{
 		ID: res.RunID, PhotosDeleted: int32(res.PhotosDeleted), RecordsAnonymized: int32(res.RecordsAnonymized),
-		PreregsAnonymized: int32(res.PreRegsAnonymized), Error: errText,
+		PreregsAnonymized: int32(res.PreRegsAnonymized), ShiftNotesDeleted: int32(res.ShiftNotesDeleted), Error: errText,
 	}); err != nil {
 		slog.Error("retention: record run result", "run_id", res.RunID, "err", err)
 	}
@@ -386,8 +431,8 @@ func (s *Service) finish(ctx context.Context, trigger Trigger, actor *uuid.UUID,
 	}
 	if err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
 		UserID: user, Action: "retention_run",
-		Target: fmt.Sprintf("run:%d trigger:%s dry_run:%t photos:%d records:%d failed:%d preregs:%d",
-			res.RunID, trigger, res.DryRun, res.PhotosDeleted, res.RecordsAnonymized, res.FilesFailed, res.PreRegsAnonymized),
+		Target: fmt.Sprintf("run:%d trigger:%s dry_run:%t photos:%d records:%d failed:%d shift_notes:%d preregs:%d",
+			res.RunID, trigger, res.DryRun, res.PhotosDeleted, res.RecordsAnonymized, res.FilesFailed, res.ShiftNotesDeleted, res.PreRegsAnonymized),
 	}); err != nil {
 		slog.Error("retention: audit run", "run_id", res.RunID, "err", err)
 	}
