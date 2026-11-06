@@ -1,8 +1,9 @@
 -- name: CreateVisit :one
 -- Returns no row when client_request_id already exists (idempotent retry).
 INSERT INTO visits (client_request_id, house_id, guest_name, category, purpose_note, vehicle_plate, checkin_by,
-                    vehicle_photo_path, face_photo_path, pre_registration_id, client_captured_at, watchlist_hit)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                    vehicle_photo_path, face_photo_path, pre_registration_id, client_captured_at, watchlist_hit,
+                    regular_guest_id, regular_guest_approved)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
 ON CONFLICT (client_request_id) DO NOTHING
 RETURNING id;
 
@@ -12,10 +13,10 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
        (v.anonymized_at IS NOT NULL)::bool AS anonymized,
        -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
-       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       COALESCE(d.decision, CASE WHEN (v.pre_registration_id IS NOT NULL OR v.regular_guest_approved) THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' WHEN v.regular_guest_approved THEN 'regular_guest' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
        v.client_captured_at, v.client_checkout_captured_at,
@@ -31,10 +32,10 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
        (v.anonymized_at IS NOT NULL)::bool AS anonymized,
        -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
-       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       COALESCE(d.decision, CASE WHEN (v.pre_registration_id IS NOT NULL OR v.regular_guest_approved) THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' WHEN v.regular_guest_approved THEN 'regular_guest' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
        v.client_captured_at, v.client_checkout_captured_at,
@@ -59,10 +60,10 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
        (v.anonymized_at IS NOT NULL)::bool AS anonymized,
        -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
-       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       COALESCE(d.decision, CASE WHEN (v.pre_registration_id IS NOT NULL OR v.regular_guest_approved) THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' WHEN v.regular_guest_approved THEN 'regular_guest' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
        v.client_captured_at, v.client_checkout_captured_at,
@@ -80,7 +81,7 @@ WHERE v.status = 'inside'
   AND (sqlc.narg('name_like')::text IS NULL OR v.guest_name ILIKE sqlc.narg('name_like'))
   AND (sqlc.narg('plate_like')::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE sqlc.narg('plate_like'))
   AND (sqlc.narg('decision')::text IS NULL
-       OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = sqlc.narg('decision'))
+       OR COALESCE(d.decision, CASE WHEN (v.pre_registration_id IS NOT NULL OR v.regular_guest_approved) THEN 'approved' ELSE 'pending' END) = sqlc.narg('decision'))
   AND (sqlc.narg('overstay_only')::bool IS NOT TRUE
        OR (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours())))
 ORDER BY v.checkin_at DESC, v.id DESC
@@ -92,10 +93,10 @@ SELECT v.id, v.house_id, h.block, h.number, v.guest_name, v.category, v.purpose_
        (v.vehicle_photo_path IS NOT NULL)::bool AS has_vehicle_photo, (v.face_photo_path IS NOT NULL)::bool AS has_face_photo,
        (v.anonymized_at IS NOT NULL)::bool AS anonymized,
        -- Owner decision (S4). A visit made from a pre-registration counts as approved until the owner says otherwise.
-       COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
+       COALESCE(d.decision, CASE WHEN (v.pre_registration_id IS NOT NULL OR v.regular_guest_approved) THEN 'approved' ELSE 'pending' END)::text AS owner_decision,
        d.decided_at AS owner_decided_at,
        -- Empty while pending (never NULL, so it scans into a plain string).
-       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' END, '')::text AS owner_decision_source,
+       COALESCE(CASE WHEN d.decision IS NOT NULL THEN 'owner' WHEN v.pre_registration_id IS NOT NULL THEN 'pre_registration' WHEN v.regular_guest_approved THEN 'regular_guest' END, '')::text AS owner_decision_source,
        -- Long stay (S7): still inside after the configured number of hours, by the server clock.
        (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours()))::bool AS overstay,
        v.client_captured_at, v.client_checkout_captured_at,
@@ -113,7 +114,7 @@ WHERE (sqlc.narg('status')::text IS NULL OR v.status = sqlc.narg('status'))
   AND (sqlc.narg('name_like')::text IS NULL OR v.guest_name ILIKE sqlc.narg('name_like'))
   AND (sqlc.narg('plate_like')::text IS NULL OR replace(v.vehicle_plate, ' ', '') ILIKE sqlc.narg('plate_like'))
   AND (sqlc.narg('decision')::text IS NULL
-       OR COALESCE(d.decision, CASE WHEN v.pre_registration_id IS NOT NULL THEN 'approved' ELSE 'pending' END) = sqlc.narg('decision'))
+       OR COALESCE(d.decision, CASE WHEN (v.pre_registration_id IS NOT NULL OR v.regular_guest_approved) THEN 'approved' ELSE 'pending' END) = sqlc.narg('decision'))
   AND (sqlc.narg('overstay_only')::bool IS NOT TRUE
        OR (v.status = 'inside' AND v.checkin_at < now() - make_interval(hours => long_stay_hours())))
 ORDER BY v.checkin_at DESC, v.id DESC

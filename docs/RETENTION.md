@@ -148,6 +148,17 @@ longer needed.
 A visit keeps only a yes/no flag (`watchlist_hit`), never the plate, name or note of the entry, and that flag is
 not personal data. The audit log records which entry was changed or hit by id, never its contents.
 
+## Regular guests (C2)
+
+An owner's list of regular guests (a maid, a driver, a tutor) holds names and sometimes plates. It is the owner's
+standing consent, so **entries do not expire on their own** and the daily job does not touch them: a list that
+emptied itself every 90 days would defeat its purpose. The owner removes an entry whenever they like with
+`DELETE /v1/regular-guests/{id}` (a real delete), and an admin cannot change the list. Guards and admins can read it
+because the guard has to pick the guest at the gate.
+
+A visit made from an entry is a normal visit: its own name and plate are blanked by the usual retention limit. It keeps
+only a yes/no approval flag, and deleting the entry leaves the visit intact.
+
 ## Not covered yet
 
 - Retention of the audit log itself.

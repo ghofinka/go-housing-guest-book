@@ -220,6 +220,9 @@ type CheckInInput struct {
 	// PreRegistrationCode is a normalized pre-registration code (PRD S2), "" for none. When set,
 	// the house, name and plate default from the pre-registration.
 	PreRegistrationCode string
+	// RegularGuestID is an entry from the owner's regular-guest list (PRD C2), nil for none. House, name,
+	// plate and category default from it.
+	RegularGuestID *uuid.UUID
 	// ClientCapturedAt is when the device recorded the check-in while offline (PRD S5), nil online.
 	// It is stored beside the server's check-in time, never instead of it.
 	ClientCapturedAt *time.Time
@@ -358,6 +361,15 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			}
 		}
 
+		// A regular guest (PRD C2) supplies the house, name, plate and category the guard left out.
+		var regularID pgtype.UUID
+		if in.RegularGuestID != nil {
+			var err error
+			if regularID, err = useRegular(ctx, q, &in); err != nil {
+				return err
+			}
+		}
+
 		h, err := q.GetHouse(ctx, in.HouseID)
 		if errors.Is(err, pgx.ErrNoRows) || (err == nil && !h.Active) {
 			return ErrHouseInvalid
@@ -417,6 +429,10 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 			PreRegistrationID: preRegID,
 			ClientCapturedAt:  timestamptzOrNullPtr(in.ClientCapturedAt),
 			WatchlistHit:      hit,
+			// The owner approved this guest in advance; kept on the visit so deleting the entry later
+			// does not turn a guest who is still inside back into one waiting for an answer.
+			RegularGuestID:       regularID,
+			RegularGuestApproved: regularID.Valid,
 		})
 		if errors.Is(err, pgx.ErrNoRows) { // lost a race with the same client_request_id
 			v, ok, err := replay(ctx, q, in.ClientRequestID)
@@ -440,7 +456,16 @@ func (s *Service) CheckIn(ctx context.Context, p auth.Principal, in CheckInInput
 				return err
 			}
 		}
-		if err := s.enqueueArrival(ctx, q, id, in.HouseID, in.Category); err != nil {
+		if regularID.Valid {
+			// No arrival email: the owner approved this guest in advance, and a daily maid or driver
+			// would otherwise flood their inbox.
+			if err := q.InsertAuditLog(ctx, db.InsertAuditLogParams{
+				UserID: pgtype.UUID{Bytes: p.UserID, Valid: true}, Action: "regular_guest_used",
+				Target: "regular:" + uuid.UUID(regularID.Bytes).String(),
+			}); err != nil {
+				return err
+			}
+		} else if err := s.enqueueArrival(ctx, q, id, in.HouseID, in.Category); err != nil {
 			return err
 		}
 		row, err := q.GetVisit(ctx, id)
@@ -755,6 +780,7 @@ func wrap(err error, op string) error {
 		ErrNotFound, ErrPhotoNotFound, ErrHouseInvalid, ErrFacePhotoRequired, ErrVehiclePhotoRequired,
 		ErrPreRegNotFound, ErrPreRegUsed, ErrPreRegCancelled, ErrPreRegWrongDate, ErrPreRegHouseMismatch,
 		ErrVisitClosed, ErrDecisionMade, ErrClientTimeFuture, ErrClientTimeOld,
+		ErrRegularGuestInvalid, ErrRegularHouseMismatch,
 	} {
 		if errors.Is(err, known) {
 			return err

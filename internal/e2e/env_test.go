@@ -28,6 +28,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/photo"
 	"github.com/ghofinka/go-housing-guest-book/internal/prereg"
 	"github.com/ghofinka/go-housing-guest-book/internal/privacy"
+	"github.com/ghofinka/go-housing-guest-book/internal/regular"
 	"github.com/ghofinka/go-housing-guest-book/internal/report"
 	"github.com/ghofinka/go-housing-guest-book/internal/retention"
 	"github.com/ghofinka/go-housing-guest-book/internal/server"
@@ -132,6 +133,7 @@ func run(m *testing.M) (int, error) {
 		notify.NewHandler(notify.NewSettingsService(app, true), authn),
 		report.NewHandler(report.NewService(app), authn),
 		watchlist.NewHandler(watchlist.NewService(app), authn),
+		regular.NewHandler(regular.NewService(app), authn),
 		audit.NewHandler(audit.NewService(app), authn),
 		retention.NewHandler(retention.NewService(app, photos), authn),
 		privacy.NewHandler(privacy.NewService(app), authn),

@@ -9,13 +9,13 @@ Branch: `feature/improvements` (from `1bcbf7a`). One commit per item. Last updat
 | Item | What | Done | Status |
 |---|---|---|---|
 | C1 | Watchlist | 16 / 16 | **Done** and committed |
-| C2 | Regular guests | 0 / 15 | Not started |
+| C2 | Regular guests | 15 / 15 | **Done** and committed |
 | C3 | Plate OCR | 0 / 10 | **On hold**: waiting for your decision on the engine |
 | C4 | Statistics dashboard | 0 / 13 | Not started |
 | C5 | Shift handover notes | 0 / 15 | Not started |
 | C6 | Multi-language | 0 / 16 | Not started (done last, so it covers every message above) |
 | C7 | Visitor card number | 0 / 12 | Not started |
-| | **Total** | **16 / 97** | |
+| | **Total** | **31 / 97** | |
 
 Order: C1, C2, C4, C5, C7, then C6 last. C3 comes in when its engine is decided.
 
@@ -42,23 +42,23 @@ Every item ends with the same closing steps: full suite green, migration up/down
 - [x] C1.15 Change log in `changelog/`
 - [x] C1.16 Commit
 
-## C2 Regular guests (0 / 15)
+## C2 Regular guests (15 / 15)
 
-- [ ] C2.1 Migration: table `regular_guests` with row-level security (owner: own house; guard and admin: read all)
-- [ ] C2.2 Column `visits.regular_guest_id` and the owner-decision CASE extended in all four SELECTs (approved, source `regular_guest`)
-- [ ] C2.3 sqlc queries and regenerate
-- [ ] C2.4 Owner create, update, delete; list by role; limit of 20 active per house
-- [ ] C2.5 Check-in with `regular_guest_id`: defaults from the entry, link, 422 for an inactive or unknown id
-- [ ] C2.6 No arrival email for these visits
-- [ ] C2.7 Audit (created, updated, deleted, listed, used), never the name
-- [ ] C2.8 Wire the handler in `main.go` and the e2e environment
-- [ ] C2.9 Tests: CRUD and the limit, cross-house 404, check-in defaults, derived approval, no outbox row, deleted entry keeps old visits
-- [ ] C2.10 Negative checks
-- [ ] C2.11 Full suite green and migration up/down/up
-- [ ] C2.12 Docs
-- [ ] C2.13 `.http`
-- [ ] C2.14 Change log
-- [ ] C2.15 Commit
+- [x] C2.1 Migration `0012`: table `regular_guests` with row-level security (owner: own house; guard and admin: read all)
+- [x] C2.2 Columns `visits.regular_guest_id` and `visits.regular_guest_approved`; the owner-decision CASE extended in all four SELECTs and both filters (approved, source `regular_guest`)
+- [x] C2.3 sqlc queries and regenerate
+- [x] C2.4 Owner create, update, delete; list by role; limit of 20 active per house
+- [x] C2.5 Check-in with `regular_guest_id`: defaults from the entry, link, 422 for an inactive or unknown id
+- [x] C2.6 No arrival email for these visits
+- [x] C2.7 Audit (created, updated, deleted, listed, used), never the name
+- [x] C2.8 Wire the handler in `main.go` and the e2e environment
+- [x] C2.9 Tests: CRUD and the limit, cross-house 404, check-in defaults, derived approval, no outbox row, deleted entry keeps old visits approved
+- [x] C2.10 Negative checks: email not suppressed, approval not stored, house-blind policy (each made a test fail, then restored)
+- [x] C2.11 Full suite green and migration 0012 up/down/up
+- [x] C2.12 Docs: `README.md`, `AGENTS.md`, `docs/RETENTION.md`
+- [x] C2.13 `.http`: four routes plus a check-in example; route coverage complete
+- [x] C2.14 Change log
+- [x] C2.15 Commit
 
 ## C3 Plate OCR (0 / 10) - ON HOLD
 

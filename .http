@@ -29,6 +29,7 @@
 @preRegId = {{createPreRegistration.response.body.$.id}}
 @preRegCode = {{createPreRegistration.response.body.$.code}}
 @watchId = {{createWatchlistPlate.response.body.$.id}}
+@regularId = {{createRegularGuest.response.body.$.id}}
 
 # A fixed key for the offline-sync examples: a retry with the same key returns the same visit (200).
 # Use a new UUID for every new guest.
@@ -300,6 +301,16 @@ Content-Type: application/json
   "pre_registration_code": "{{preRegCode}}"
 }
 
+### Check in a regular guest: send only the entry's id. House, name, plate and category come from the owner's list,
+### and anything you send overrides them. The owner's approval counts as given and no arrival email is sent.
+# @name checkInRegularGuest
+POST {{baseUrl}}/v1/visits
+Authorization: Bearer {{guardToken}}
+Content-Type: application/json
+
+{
+  "regular_guest_id": "{{regularId}}"
+}
 ### Offline sync: check in with a key and the time the device recorded it. The server keeps its own time as
 ### checkin_at; client_captured_at must be at most 5 minutes ahead and 72 hours old. Send twice: 201 then 200.
 # @name checkInOffline
@@ -635,3 +646,44 @@ Content-Type: application/json
 # @name deleteWatchlist
 DELETE {{baseUrl}}/v1/watchlist/{{watchId}}
 Authorization: Bearer {{adminToken}}
+
+
+################################################################################
+### Regular guests (a maid, a driver, a tutor). An owner keeps the list for their own house; guards and admins
+### read every house's list (the guard picks the guest at the gate). At most 20 active entries per house.
+################################################################################
+
+### Owner adds a regular guest. plate and category are optional (category defaults to tamu).
+# @name createRegularGuest
+POST {{baseUrl}}/v1/regular-guests
+Authorization: Bearer {{ownerToken}}
+Content-Type: application/json
+
+{
+  "guest_name": "Bu Siti",
+  "plate": "B 1234 ZZ",
+  "category": "tukang"
+}
+
+### List regular guests. An owner sees only their own house; a guard or admin sees all (filter house_id, active).
+# @name listRegularGuests
+GET {{baseUrl}}/v1/regular-guests
+    ?active=true
+    &limit=50
+Authorization: Bearer {{guardToken}}
+
+### Owner changes an entry (send only what changes). An empty plate removes it; active=false switches it off.
+# @name updateRegularGuest
+PATCH {{baseUrl}}/v1/regular-guests/{{regularId}}
+Authorization: Bearer {{ownerToken}}
+Content-Type: application/json
+
+{
+  "guest_name": "Bu Siti ART",
+  "plate": ""
+}
+
+### Owner deletes an entry for good. Visits already made from it stay, and stay approved.
+# @name deleteRegularGuest
+DELETE {{baseUrl}}/v1/regular-guests/{{regularId}}
+Authorization: Bearer {{ownerToken}}

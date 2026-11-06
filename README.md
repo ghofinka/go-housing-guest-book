@@ -7,8 +7,8 @@ and audit.
 
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
 fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5
-(offline sync), S6 (search), S7 (long-stay flag) and S8 (report export), and the Could-have item C1
-(watchlist). The other Could-have items are not started.
+(offline sync), S6 (search), S7 (long-stay flag) and S8 (report export), and the Could-have items C1
+(watchlist) and C2 (regular guests). The other Could-have items are not started.
 
 ## Tech stack
 
@@ -65,6 +65,26 @@ fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner con
   pre-registration, and the category defaults to `tamu`. A plate still needs its vehicle photo.
 - Other houses' pre-registrations answer 404 (row-level security plus a service check). Names and
   plates expire with the personal-data retention limit, see [docs/RETENTION.md](docs/RETENTION.md).
+
+**Regular guests (PRD C2)**
+- An owner keeps a list of regular guests for their own house (a maid, a driver, a tutor):
+  `POST /v1/regular-guests` (`guest_name`, optional `plate`, `category` defaulting to `tamu`),
+  `PATCH /v1/regular-guests/{id}` (an empty `plate` removes it) and `DELETE /v1/regular-guests/{id}`.
+  At most 20 active entries per house; switching an entry back on counts. Guards and admins read every
+  house's list with `GET /v1/regular-guests` (filter `house_id`, `active`); an owner sees only their own.
+  Another house's entry answers 404, and only an owner can change the list.
+- The guard checks a regular guest in by sending just `regular_guest_id` to `POST /v1/visits` (JSON or
+  multipart). The house, name, plate and category come from the entry, and anything the guard sends
+  overrides them. An inactive or unknown entry, an entry of another house, or sending it together with a
+  pre-registration code is a 422. A plate from the entry still needs its vehicle photo.
+- The owner's approval counts as given: the visit shows `owner_decision` approved with source
+  `regular_guest` (the owner can still reject it once). That fact is stored on the visit, so deleting the
+  entry later does not turn a guest who is still inside back into one waiting for an answer.
+- **No arrival email** is sent for a regular guest (a daily maid would flood the owner's inbox). The check-in is
+  audited as `regular_guest_used`, and every change to the list as `regular_guest_created`, `_updated`,
+  `_deleted` (and `regular_guests_listed` for an owner or admin), always by id, never by name or plate.
+- The list is the owner's standing consent and does not expire by itself; the owner deletes entries whenever
+  they like.
 
 **Watchlist (PRD C1)**
 - An admin keeps a list of plates and names that need special attention: `POST/GET /v1/watchlist`,
@@ -192,7 +212,7 @@ fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner con
 
 ### Not built yet
 
-The Could-have items C2 to C7 and admin 2FA. There is no `openapi.yaml` yet.
+The Could-have items C3 to C7 and admin 2FA. There is no `openapi.yaml` yet.
 
 ## Running the project
 

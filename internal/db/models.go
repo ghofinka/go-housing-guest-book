@@ -68,6 +68,18 @@ type RefreshToken struct {
 	CreatedAt  time.Time          `json:"created_at"`
 }
 
+type RegularGuest struct {
+	ID        uuid.UUID   `json:"id"`
+	HouseID   uuid.UUID   `json:"house_id"`
+	GuestName string      `json:"guest_name"`
+	Plate     pgtype.Text `json:"plate"`
+	Category  string      `json:"category"`
+	Active    bool        `json:"active"`
+	CreatedBy uuid.UUID   `json:"created_by"`
+	CreatedAt time.Time   `json:"created_at"`
+	UpdatedAt time.Time   `json:"updated_at"`
+}
+
 type RetentionRun struct {
 	ID                int64              `json:"id"`
 	StartedAt         time.Time          `json:"started_at"`
@@ -119,6 +131,8 @@ type Visit struct {
 	ClientCapturedAt         pgtype.Timestamptz `json:"client_captured_at"`
 	ClientCheckoutCapturedAt pgtype.Timestamptz `json:"client_checkout_captured_at"`
 	WatchlistHit             bool               `json:"watchlist_hit"`
+	RegularGuestID           pgtype.UUID        `json:"regular_guest_id"`
+	RegularGuestApproved     bool               `json:"regular_guest_approved"`
 }
 
 type VisitDecision struct {

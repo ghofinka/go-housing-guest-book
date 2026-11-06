@@ -79,6 +79,9 @@ type checkInRequest struct {
 	// ClientCapturedAt (PRD S5): when the device recorded the check-in while offline, RFC 3339.
 	// It is stored beside the server's check-in time, which stays authoritative.
 	ClientCapturedAt *time.Time `json:"client_captured_at"`
+	// RegularGuestID (PRD C2): an entry from the owner's regular-guest list. House, name, plate and
+	// category default from it, and the owner's approval counts as already given.
+	RegularGuestID *uuid.UUID `json:"regular_guest_id"`
 }
 
 // checkIn accepts JSON (no photos) or multipart/form-data. The multipart form has
@@ -106,6 +109,11 @@ func (h *Handler) checkIn(w http.ResponseWriter, r *http.Request) {
 		PurposeNote:      blankToNil(req.PurposeNote),
 		VehiclePlate:     blankToNil(req.VehiclePlate),
 		ClientCapturedAt: req.ClientCapturedAt,
+		RegularGuestID:   req.RegularGuestID,
+	}
+	// A guest comes from one source of defaults, not two.
+	if req.RegularGuestID != nil && blankToNil(req.PreRegistrationCode) != nil {
+		fields["regular_guest_id"] = "Pilih kode pre-registrasi atau tamu langganan, tidak keduanya."
 	}
 	// With a pre-registration code the pre-registration supplies the house and name, and the
 	// category defaults to a plain guest.
@@ -120,17 +128,18 @@ func (h *Handler) checkIn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if req.HouseID == nil || *req.HouseID == uuid.Nil {
-		if _, bad := fields["house_id"]; !bad && in.PreRegistrationCode == "" {
+		if _, bad := fields["house_id"]; !bad && in.PreRegistrationCode == "" && in.RegularGuestID == nil {
 			fields["house_id"] = "Nomor rumah tujuan wajib dipilih."
 		}
 	} else {
 		in.HouseID = *req.HouseID
 	}
-	if !validCategories[in.Category] {
+	// A regular guest brings its own category, so none has to be sent with it.
+	if !validCategories[in.Category] && !(in.Category == "" && in.RegularGuestID != nil) {
 		fields["category"] = "Kategori harus tamu, kurir, ojol, tukang, keluarga, atau lainnya."
 	}
 	switch {
-	case in.GuestName == nil && !FastLane(in.Category) && in.PreRegistrationCode == "":
+	case in.GuestName == nil && !FastLane(in.Category) && in.PreRegistrationCode == "" && in.RegularGuestID == nil:
 		fields["guest_name"] = "Nama tamu wajib diisi."
 	case in.GuestName != nil && utf8.RuneCountInString(*in.GuestName) > maxNameLen:
 		fields["guest_name"] = "Nama maksimal " + strconv.Itoa(maxNameLen) + " karakter."
@@ -404,6 +413,10 @@ func (h *Handler) decide(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
+	case errors.Is(err, ErrRegularGuestInvalid):
+		httpx.ValidationError(w, map[string]string{"regular_guest_id": "Tamu langganan tidak ditemukan atau tidak aktif."})
+	case errors.Is(err, ErrRegularHouseMismatch):
+		httpx.ValidationError(w, map[string]string{"house_id": "Tamu langganan ini terdaftar untuk rumah lain."})
 	case errors.Is(err, ErrClientTimeFuture):
 		httpx.ValidationError(w, map[string]string{"client_captured_at": "Waktu perangkat tidak boleh di masa depan. Periksa jam perangkat."})
 	case errors.Is(err, ErrClientTimeOld):
@@ -485,6 +498,7 @@ func readCheckInForm(w http.ResponseWriter, r *http.Request, req *checkInRequest
 	req.ClientRequestID = parseUUID("client_request_id")
 	req.GuestName, req.PurposeNote, req.VehiclePlate = val("guest_name"), val("purpose_note"), val("vehicle_plate")
 	req.PreRegistrationCode = val("pre_registration_code")
+	req.RegularGuestID = parseUUID("regular_guest_id")
 	if s := blankToNil(val("client_captured_at")); s != nil {
 		t, err := time.Parse(time.RFC3339, *s)
 		if err != nil {
