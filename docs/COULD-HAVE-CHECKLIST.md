@@ -1,6 +1,6 @@
 # Could-have checklist (PRD C1-C7)
 
-Branch: `feature/improvements` (from `1bcbf7a`). One commit per item. Last updated 2026-11-05.
+Branch: `feature/improvements` (from `1bcbf7a`). One commit per item. Last updated 2026-11-06.
 
 `[x]` done and verified, `[ ]` not done, `[ ] (on hold)` waiting for a decision.
 
@@ -11,13 +11,16 @@ Branch: `feature/improvements` (from `1bcbf7a`). One commit per item. Last updat
 | C1 | Watchlist | 16 / 16 | **Done** and committed |
 | C2 | Regular guests | 15 / 15 | **Done** and committed |
 | C3 | Plate OCR | 0 / 10 | **On hold**: waiting for your decision on the engine |
-| C4 | Statistics dashboard | 0 / 13 | Not started |
+| C4 | Statistics dashboard | 13 / 13 | **Done** and committed |
 | C5 | Shift handover notes | 0 / 15 | Not started |
 | C6 | Multi-language | 0 / 16 | Not started (done last, so it covers every message above) |
 | C7 | Visitor card number | 0 / 12 | Not started |
-| | **Total** | **31 / 97** | |
+| | **Total** | **44 / 97** | |
 
 Order: C1, C2, C4, C5, C7, then C6 last. C3 comes in when its engine is decided.
+
+Follow-up ideas that are not part of C1-C7 (soft delete of regular guests, stale inside visits, duplicate detection) are
+noted in `docs/IMPROVEMENTS-BACKLOG.md`.
 
 Every item ends with the same closing steps: full suite green, migration up/down/up, docs, `.http`, changelog, commit.
 
@@ -73,21 +76,21 @@ Every item ends with the same closing steps: full suite green, migration up/down
 - [ ] (on hold) C3.9 Change log
 - [ ] (on hold) C3.10 Commit
 
-## C4 Statistics dashboard (0 / 13)
+## C4 Statistics dashboard (13 / 13)
 
-- [ ] C4.1 SQL aggregate queries (total, by category, by day, by hour, top houses, average stay, still inside, overstay) in WIB
-- [ ] C4.2 Endpoint `GET /v1/stats/visits` (admin, at most 93 days, optional `house_id`)
-- [ ] C4.3 Zero-filled days and hours
-- [ ] C4.4 Audit `stats_viewed` (period only)
-- [ ] C4.5 Decide whether an index on `checkin_at` is needed (from `EXPLAIN` on bulk data)
-- [ ] C4.6 Wire the handler in `main.go` and the e2e environment
-- [ ] C4.7 Tests: figures, zero-filling, WIB day boundary, totals match the CSV, period validation, admin only
-- [ ] C4.8 Negative checks (for example UTC bucketing)
-- [ ] C4.9 Full suite green (and migration check if an index is added)
-- [ ] C4.10 Docs
-- [ ] C4.11 `.http`
-- [ ] C4.12 Change log
-- [ ] C4.13 Commit
+- [x] C4.1 SQL aggregate queries (total, by category, by day, by hour, top houses, average stay, still inside, overstay) in WIB
+- [x] C4.2 Endpoint `GET /v1/stats/visits` (every role, scoped by role; optional `from`/`to`, default last 7 days; at most 93 days)
+- [x] C4.3 Zero-filled days and hours
+- [x] C4.4 No audit (aggregates, no personal data, loaded on every login): deviation from the plan
+- [x] C4.5 Index `visits(checkin_at)` (migration 0013)
+- [x] C4.6 Wire the handler in `main.go` and the e2e environment
+- [x] C4.7 Tests: figures, zero-filling, WIB day boundary, totals match the CSV, period validation, admin only
+- [x] C4.8 Negative checks (for example UTC bucketing)
+- [x] C4.9 Full suite green (and migration check if an index is added)
+- [x] C4.10 Docs
+- [x] C4.11 `.http`
+- [x] C4.12 Change log
+- [x] C4.13 Commit
 
 ## C5 Shift handover notes (0 / 15)
 

@@ -8,7 +8,7 @@ and audit.
 Status: the MVP backend is implemented and tested, plus the Should-have items S1 (courier/ojol
 fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner confirm/reject), S5
 (offline sync), S6 (search), S7 (long-stay flag) and S8 (report export), and the Could-have items C1
-(watchlist) and C2 (regular guests). The other Could-have items are not started.
+(watchlist), C2 (regular guests) and C4 (statistics). The other Could-have items are not started.
 
 ## Tech stack
 
@@ -85,6 +85,17 @@ fast lane), S2 (pre-registration), S3 (owner email notifications), S4 (owner con
   `_deleted` (and `regular_guests_listed` for an owner or admin), always by id, never by name or plate.
 - The list is the owner's standing consent and does not expire by itself; the owner deletes entries whenever
   they like.
+
+**Statistics (PRD C4)**
+- `GET /v1/stats/visits` is a separate endpoint a frontend can call right after login. Every role may call it; the
+  answer is scoped: admins and guards see all houses (optional `house_id`), an owner only their own house.
+- `from` and `to` are optional calendar days (`YYYY-MM-DD`, WIB, both included). Without them the period is the last 7
+  days including today. A period longer than 93 days, `from` after `to` or a bad date is a 422.
+- The answer holds counts only (never a name or plate): `total`, `still_inside`, `overstay`,
+  `average_minutes_inside` (null when nobody has left), `by_category`, `by_day`, `by_hour` (every day, hour and
+  category present, with 0 when empty), `busiest_hour`, and `top_houses` (top 10; admins and guards only, absent for an
+  owner). Days and hours are bucketed in WIB, not UTC.
+- Not audited: it loads on every login and holds no personal data.
 
 **Watchlist (PRD C1)**
 - An admin keeps a list of plates and names that need special attention: `POST/GET /v1/watchlist`,

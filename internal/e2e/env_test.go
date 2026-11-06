@@ -32,6 +32,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/report"
 	"github.com/ghofinka/go-housing-guest-book/internal/retention"
 	"github.com/ghofinka/go-housing-guest-book/internal/server"
+	"github.com/ghofinka/go-housing-guest-book/internal/stats"
 	"github.com/ghofinka/go-housing-guest-book/internal/user"
 	"github.com/ghofinka/go-housing-guest-book/internal/visit"
 	"github.com/ghofinka/go-housing-guest-book/internal/watchlist"
@@ -134,6 +135,7 @@ func run(m *testing.M) (int, error) {
 		report.NewHandler(report.NewService(app), authn),
 		watchlist.NewHandler(watchlist.NewService(app), authn),
 		regular.NewHandler(regular.NewService(app), authn),
+		stats.NewHandler(stats.NewService(app), authn),
 		audit.NewHandler(audit.NewService(app), authn),
 		retention.NewHandler(retention.NewService(app, photos), authn),
 		privacy.NewHandler(privacy.NewService(app), authn),

@@ -27,6 +27,7 @@ import (
 	"github.com/ghofinka/go-housing-guest-book/internal/report"
 	"github.com/ghofinka/go-housing-guest-book/internal/retention"
 	"github.com/ghofinka/go-housing-guest-book/internal/server"
+	"github.com/ghofinka/go-housing-guest-book/internal/stats"
 	"github.com/ghofinka/go-housing-guest-book/internal/user"
 	"github.com/ghofinka/go-housing-guest-book/internal/visit"
 	"github.com/ghofinka/go-housing-guest-book/internal/watchlist"
@@ -113,6 +114,7 @@ func run() error {
 				report.NewHandler(report.NewService(pool), authn),
 				watchlist.NewHandler(watchlist.NewService(pool), authn),
 				regular.NewHandler(regular.NewService(pool), authn),
+				stats.NewHandler(stats.NewService(pool), authn),
 				audit.NewHandler(audit.NewService(pool), authn),
 				retention.NewHandler(retentionSvc, authn),
 				privacy.NewHandler(privacy.NewService(pool, privacyOpts...), authn),

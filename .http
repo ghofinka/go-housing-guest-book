@@ -687,3 +687,20 @@ Content-Type: application/json
 # @name deleteRegularGuest
 DELETE {{baseUrl}}/v1/regular-guests/{{regularId}}
 Authorization: Bearer {{ownerToken}}
+
+################################################################################
+### Statistics. Every role may call it (a frontend loads it right after login); the answer is scoped: admin and guard
+### see all houses, an owner only their own. Counts only, no personal data.
+################################################################################
+
+### Default period: the last 7 days including today (WIB).
+# @name statsDefault
+GET {{baseUrl}}/v1/stats/visits
+Authorization: Bearer {{ownerToken}}
+
+### A chosen period (from/to are days in WIB, both included, at most 93 days). house_id is optional for admin/guard.
+# @name statsPeriod
+GET {{baseUrl}}/v1/stats/visits
+    ?from=2026-11-01
+    &to=2026-11-06
+Authorization: Bearer {{adminToken}}
